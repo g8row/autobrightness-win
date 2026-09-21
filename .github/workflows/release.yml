@@ -44,9 +44,11 @@ jobs:
       - name: Checksums
         shell: pwsh
         run: |
-          Get-ChildItem dist/*.zip | ForEach-Object {
+          # LF line endings so `sha256sum -c SHA256SUMS.txt` works as well as Get-FileHash.
+          $lines = Get-ChildItem dist/*.zip | ForEach-Object {
             "$((Get-FileHash $_ -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
-          } | Set-Content dist/SHA256SUMS.txt -Encoding ascii
+          }
+          [IO.File]::WriteAllText("$PWD/dist/SHA256SUMS.txt", (($lines -join "`n") + "`n"))
           Get-Content dist/SHA256SUMS.txt
 
       - name: Attest build provenance
