@@ -16,6 +16,8 @@ try
         case "autoread": await WithCamera(opts, AutoRead); break;
         case "watch": await WithCamera(opts, Watch); break;
         case "rate": await WithCamera(opts, Rate); break;
+        case "cycles": await Cycles(opts); break;
+        case "plain": await Plain(opts); break;
         default: Help(); break;
     }
 }
@@ -38,6 +40,10 @@ static void Help() => Console.WriteLine("""
                                             step monitor brightness via Twinkle Tray and measure the change
       autoread [--monitor ID]               leave auto-exposure on and check whether the chosen value can be read back
       rate     [--exposure N] [--seconds N] frames delivered per second (stream health)
+      plain    [--count N] [--pause S] [--seconds N] [--lock [--exposure N] [--gain N]]
+                                            open/stream/close cycles without DirectShow; --lock uses Frame Server controls
+      cycles   [--count N] [--pause S] [--exposure N]
+                                            open, meter and close repeatedly (duty-cycle reliability)
       watch    [--exposure N] [--gain N] [--interval S]
                                             continuous metering (Ctrl+C to stop)
 
@@ -265,6 +271,110 @@ static async Task Rate(Session s)
         Console.WriteLine($"  t={t,3}s  frames/s {now - last,3}  total {now,5}  exposure {s.Uvc.Get(UvcProp.Exposure)}  gain {s.Uvc.Get(UvcProp.Gain)?.Value}");
         last = now;
     }
+}
+
+/// <summary>Repeatedly opens, meters and closes the camera, as a duty-cycled sensor would.</summary>
+static async Task Cycles(Dictionary<string, string> o)
+{
+    var count = int.Parse(o.GetValueOrDefault("count") ?? "10");
+    var pause = int.Parse(o.GetValueOrDefault("pause") ?? "2");
+    var exposure = int.Parse(o.GetValueOrDefault("exposure") ?? "-6");
+    var cams = await FindCameras();
+    var (info, uvc) = cams.First(c => c.Uvc?.GetRange(UvcProp.Exposure)?.Caps.HasFlag(UvcFlags.Manual) == true);
+    var snapshot = UvcProp.All.Select(p => (Prop: p, State: uvc!.Get(p))).Where(x => x.State is not null).ToList();
+    Console.WriteLine($"camera: {info.Name}; {count} cycles, exposure {exposure} locked before opening");
+    Console.WriteLine("  #   open ms  first ms  settle  mean    stdev");
+    var failures = 0;
+    try
+    {
+        for (var i = 1; i <= count; i++)
+        {
+            // Lock before streaming so the very first frames are already metered correctly.
+            uvc!.Set(UvcProp.Exposure, exposure);
+            uvc.Set(UvcProp.Gain, 0);
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                await using var g = await FrameGrabber.OpenAsync(info.Id);
+                var openMs = sw.ElapsedMilliseconds;
+                await g.NextFrameAsync();
+                var firstMs = sw.ElapsedMilliseconds;
+                var s = new Session(info, uvc, g, o);
+                var settle = await s.SettleAsync();
+                var means = new double[5];
+                for (var k = 0; k < 5; k++) means[k] = (await g.NextFrameAsync()).Stats().Mean;
+                Console.WriteLine($"  {i,-3} {openMs,7}  {firstMs,8}  {settle,6}  {means.Average(),5:F1}  {StdDev(means),6:F3}");
+            }
+            catch (TimeoutException ex)
+            {
+                failures++;
+                Console.WriteLine($"  {i,-3} FAILED after {sw.ElapsedMilliseconds} ms: {ex.Message}");
+            }
+            await Task.Delay(pause * 1000);
+        }
+    }
+    finally
+    {
+        foreach (var (p, v) in snapshot) uvc!.Set(p, v!.Value.Value, v.Value.Flags);
+        Console.WriteLine($"{count - failures}/{count} cycles succeeded; camera controls restored");
+    }
+}
+
+/// <summary>
+/// Open/stream/close cycles that never touch DirectShow. With --lock, exposure and gain are set through
+/// VideoDeviceController (Frame Server) instead.
+/// </summary>
+static async Task Plain(Dictionary<string, string> o)
+{
+    var count = int.Parse(o.GetValueOrDefault("count") ?? "5");
+    var pause = int.Parse(o.GetValueOrDefault("pause") ?? "3");
+    var seconds = int.Parse(o.GetValueOrDefault("seconds") ?? "3");
+    var doLock = o.ContainsKey("lock");
+    var exposure = int.Parse(o.GetValueOrDefault("exposure") ?? "-6");
+    var gain = int.Parse(o.GetValueOrDefault("gain") ?? "0");
+
+    var infos = await DeviceInformation.FindAllAsync(DeviceClass.VideoCapture);
+    var info = infos.First(i => i.Id.Contains(o.GetValueOrDefault("device") ?? "VID_046D", StringComparison.OrdinalIgnoreCase));
+    Console.WriteLine($"camera: {info.Name}; {count} cycles, {seconds}s streaming, {pause}s pause, lock={doLock} (no DirectShow)");
+    var ok = 0;
+    for (var i = 1; i <= count; i++)
+    {
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            await using var g = await FrameGrabber.OpenAsync(info.Id);
+            var openMs = sw.ElapsedMilliseconds;
+            var vdc = g.Capture.VideoDeviceController;
+            var note = "";
+            if (doLock)
+            {
+                var caps = vdc.Exposure.Capabilities;
+                var autoOff = vdc.Exposure.TrySetAuto(false);
+                var setExp = vdc.Exposure.TrySetValue(exposure);
+                var gainStatus = KsControls.Set(vdc, KsControls.VideoProcAmpSet, 9, gain, 2);
+                vdc.Exposure.TryGetValue(out var expNow);
+                vdc.Exposure.TryGetAuto(out var expAuto);
+                var gainNow = KsControls.Get(vdc, KsControls.VideoProcAmpSet, 9);
+                note = $"exposure caps [{caps.Min},{caps.Max}] step {caps.Step} auto={caps.AutoModeSupported}; set auto-off {autoOff} value {setExp} -> now {expNow} auto={expAuto}; gain set {gainStatus} -> now {gainNow}";
+            }
+            await g.NextFrameAsync();
+            var firstMs = sw.ElapsedMilliseconds;
+            var start = g.FramesArrived;
+            await Task.Delay(seconds * 1000);
+            var fps = (g.FramesArrived - start) / (double)seconds;
+            var st = (await g.NextFrameAsync()).Stats();
+            if (doLock) vdc.Exposure.TrySetAuto(true);
+            Console.WriteLine($"  {i,-3} open {openMs,5} ms  first frame {firstMs,5} ms  {fps,5:F1} fps  mean {st.Mean,5:F1}");
+            if (note.Length > 0) Console.WriteLine($"      {note}");
+            ok++;
+        }
+        catch (TimeoutException ex)
+        {
+            Console.WriteLine($"  {i,-3} FAILED after {sw.ElapsedMilliseconds} ms: {ex.Message}");
+        }
+        await Task.Delay(pause * 1000);
+    }
+    Console.WriteLine($"{ok}/{count} cycles succeeded");
 }
 
 static async Task<string> FirstMonitor()
