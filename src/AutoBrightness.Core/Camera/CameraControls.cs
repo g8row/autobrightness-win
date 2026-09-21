@@ -94,6 +94,13 @@ internal sealed class CameraControls(VideoDeviceController vdc)
         catch (Exception) { /* device already gone */ }
     }
 
+    /// <summary>Returns exposure and white balance to automatic; for diagnostics.</summary>
+    public void RestoreAuto()
+    {
+        vdc.Exposure.TrySetAuto(true);
+        vdc.WhiteBalance.TrySetAuto(true);
+    }
+
     public sealed record Snapshot(bool ExposureAuto, int? Exposure, bool WhiteBalanceAuto, int? Gain);
 
     private static byte[] Property(uint id, uint flags)

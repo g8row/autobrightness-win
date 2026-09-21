@@ -57,3 +57,26 @@ Exposure sweep, same scene:
 2. Does locking exposure through Frame Server still work with Windows 11 multi-app camera mode switched on?
 3. Long-run stability: hours of duty-cycled opens (every 15–60 s).
 4. Does this camera provide per-frame capture metadata (exposure time, ISO gains)? Almost certainly not on this model.
+
+## Core library on hardware (abctl)
+
+Calibration of the Logitech `046D:0819` at night (dim room):
+
+- Exposure range 1/8192 s to 1/32 s (capped at the 30 fps frame period); settle time 5 frames.
+- **Gain through Frame Server works:** writes are confirmed by read-back, and the range 0–255 is read with
+  `KSPROPERTY_TYPE_BASICSUPPORT`. The gain table runs up to ×9.4 at 255, about 3.2 extra stops for dark rooms.
+- Response: gamma 1.26 with black 0 (only 4 well-exposed points in the dim room). The fitted model
+  agreed within ±0.07 stops across exposures. Noise: 0.21 levels.
+- Repeated readings, opening and closing the camera for each: EV 3.07–3.15 over a minute.
+
+**First-frame latency depends on the exposure mode when the stream starts:**
+
+| Exposure mode at stream start | First frame after open |
+|---|---|
+| Auto | about 0.9 s |
+| Manual | **about 5.2 s** |
+
+The first version of `CameraSession` saved the camera's settings before the stream started. At that point
+Windows reported exposure as not auto, so closing the session left the camera in manual mode, and every
+later open took 4.5 s longer. That included other apps. Saving the settings after the stream starts fixes it:
+the camera is left in auto, and metering takes about 0.5 s.

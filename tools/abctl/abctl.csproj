@@ -1,14 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <OutputType>Exe</OutputType>
     <TargetFramework>$(WindowsTargetFramework)</TargetFramework>
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
-    <RootNamespace>AutoBrightness</RootNamespace>
+    <RootNamespace>AutoBrightness.Cli</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="AutoBrightness.Core.Tests" />
-    <InternalsVisibleTo Include="abctl" />
+    <ProjectReference Include="..\..\src\AutoBrightness.Core\AutoBrightness.Core.csproj" />
   </ItemGroup>
 
 </Project>

@@ -18,7 +18,7 @@ internal sealed class CameraSession : IAsyncDisposable
 
     private readonly MediaCapture _capture;
     private readonly MediaFrameReader _reader;
-    private readonly CameraControls.Snapshot _snapshot;
+    private CameraControls.Snapshot? _snapshot;
     private readonly Channel<LumaFrame> _frames = Channel.CreateBounded<LumaFrame>(
         new BoundedChannelOptions(4) { FullMode = BoundedChannelFullMode.DropOldest });
     private int _disposed;
@@ -38,7 +38,6 @@ internal sealed class CameraSession : IAsyncDisposable
         _reader = reader;
         Format = format;
         Controls = new CameraControls(capture.VideoDeviceController);
-        _snapshot = Controls.Save();
         _reader.FrameArrived += OnFrameArrived;
     }
 
@@ -90,6 +89,8 @@ internal sealed class CameraSession : IAsyncDisposable
                 await session.DisposeAsync();
                 throw new CameraException(CameraFailure.Unavailable, $"The camera stream failed to start ({status}).");
             }
+            // Snapshot after the stream starts: property reads before streaming delayed the first frame by ~4 s.
+            session._snapshot = session.Controls.Save();
             return session;
         }
         catch (Exception ex) when (ex is not CameraException)
@@ -99,13 +100,19 @@ internal sealed class CameraSession : IAsyncDisposable
         }
     }
 
+    internal int EventsRaised, FramesWithoutBitmap, FramesFailed;
+    internal DateTime? FirstEventAt;
+    internal Exception? LastError;
+
     private void OnFrameArrived(MediaFrameReader sender, MediaFrameArrivedEventArgs args)
     {
+        Interlocked.Increment(ref EventsRaised);
+        FirstEventAt ??= DateTime.UtcNow;
         try
         {
             using var frame = sender.TryAcquireLatestFrame();
             using var bitmap = frame?.VideoMediaFrame?.SoftwareBitmap;
-            if (bitmap is null) return;
+            if (bitmap is null) { Interlocked.Increment(ref FramesWithoutBitmap); return; }
 
             using var gray = SoftwareBitmap.Convert(bitmap, BitmapPixelFormat.Gray8);
             var buffer = new Windows.Storage.Streams.Buffer((uint)(gray.PixelWidth * gray.PixelHeight * 2));
@@ -115,9 +122,11 @@ internal sealed class CameraSession : IAsyncDisposable
             _frames.Writer.TryWrite(luma);
             FrameArrived?.Invoke(luma);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             // A dropped frame is harmless; a stream that stops producing frames surfaces as a timeout.
+            Interlocked.Increment(ref FramesFailed);
+            LastError = ex;
         }
     }
 
@@ -157,11 +166,14 @@ internal sealed class CameraSession : IAsyncDisposable
         return (new Histogram(bins), last);
     }
 
+    /// <summary>When false, the camera keeps whatever settings the session left; used by diagnostics.</summary>
+    internal bool RestoreOnDispose { get; set; } = true;
+
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
         _reader.FrameArrived -= OnFrameArrived;
-        Controls.Restore(_snapshot);
+        if (_snapshot is not null && RestoreOnDispose) Controls.Restore(_snapshot);
         try { await _reader.StopAsync(); } catch (Exception) { /* already stopped */ }
         _reader.Dispose();
         _capture.Dispose();
