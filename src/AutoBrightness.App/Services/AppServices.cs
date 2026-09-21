@@ -18,6 +18,9 @@ internal static class AppServices
     public static async Task InitializeAsync(DispatcherQueue dispatcher)
     {
         Dispatcher = dispatcher;
+        // Alternative data folder (portable use, or a second instance for screenshots and tests).
+        if (Environment.GetEnvironmentVariable("AUTOBRIGHTNESS_DATA") is { Length: > 0 } dataDir)
+            AppPaths.DataDirectory = dataDir;
         Store = new SettingsStore();
         // A previous run that died mid-measurement may have left the camera in manual exposure.
         await CameraRecovery.RecoverAsync();

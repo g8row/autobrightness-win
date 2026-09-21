@@ -8,6 +8,26 @@ keeps the picture at roughly the same brightness, so those readings barely chang
 the camera's exposure, gain and white balance. It measures each camera model's tone curve with a
 calibration run and converts the picture into a light level that stays the same at any exposure setting.
 
+![Dashboard](docs/screenshots/dashboard.png)
+
+| Camera and calibration | Brightness curve |
+|---|---|
+| ![Camera page](docs/screenshots/camera.png) | ![Curve editor](docs/screenshots/curve.png) |
+
+## Download
+
+Get the zip for your PC from [Releases](https://github.com/g8row/autobrightness-win/releases): `win-x64` for most PCs, `win-arm64` for Windows on ARM. Unzip it anywhere and run `AutoBrightness.exe`; nothing needs installing.
+
+Each release is built from its tag by [GitHub Actions](.github/workflows/release.yml) and carries a signed
+[build provenance attestation](https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations).
+To check that a zip really came from this repository's workflow:
+
+```
+gh attestation verify AutoBrightness-0.1.0-win-x64.zip --repo g8row/autobrightness-win
+```
+
+SHA-256 checksums are in each release's `SHA256SUMS.txt`. The executable isn't code-signed, so SmartScreen may warn the first time you run it.
+
 ## How it works
 
 1. **Measure:** about every 20 s, the camera opens for about half a second at 160×120. Exposure is
@@ -18,8 +38,9 @@ calibration run and converts the picture into a light level that stays the same 
 3. **Map:** an editable curve turns light level into brightness. When you change brightness in Twinkle
    Tray yourself, that becomes a learned point on the curve.
 4. **Apply (Automatic mode):** the new brightness goes to Twinkle Tray over its local pipe
-   (`\\.\pipe\twinkle-tray\cmds`). Changes are limited by a minimum step, a minimum interval and a daily
-   budget, because many monitors wear out their settings memory after about 100k writes.
+   (`\\.\pipe\twinkle-tray\cmds`) as a single step. Changes are deliberately rare: at least 10%, at most every
+   15 minutes and 48 per day, because many monitors wear out their settings memory after about 100k writes.
+   Changes of 30% or more, such as switching on the room lights, apply straight away. An optional fade is in Settings.
 
 Modes: **Off** · **Preview** (measures, shows the target and learns, but never changes brightness) ·
 **Automatic**. New installs start in Preview.
@@ -45,6 +66,10 @@ Command-line switches:
 
 - `--background`: start in the tray without showing the window (used by *Start with Windows*)
 - `--exit`: ask the running instance to shut down cleanly
+
+Set `AUTOBRIGHTNESS_DATA` to use a different data folder (portable use, or a second copy for testing).
+
+To release, push a tag such as `v0.2.0`; the release workflow tests, builds both architectures, attests and publishes.
 
 ## Layout
 

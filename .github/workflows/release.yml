@@ -1,0 +1,81 @@
+name: Release
+
+# Push a tag like v0.2.0 to build, attest and publish a release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write     # create the release
+  id-token: write     # sign the build provenance with Sigstore
+  attestations: write # store the attestation on GitHub
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Version from tag
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { throw "Tag ${{ github.ref_name }} is not vX.Y.Z" }
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Test
+        run: dotnet test --project tests/AutoBrightness.Core.Tests -c Release
+
+      - name: Publish
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          foreach ($rid in 'win-x64', 'win-arm64') {
+            dotnet publish src/AutoBrightness.App -c Release -r $rid --self-contained true `
+              -p:Version=$env:VERSION -p:ContinuousIntegrationBuild=true -o "publish/$rid"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            Compress-Archive -Path "publish/$rid/*" -DestinationPath "dist/AutoBrightness-$env:VERSION-$rid.zip" -CompressionLevel Optimal
+          }
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem dist/*.zip | ForEach-Object {
+            "$((Get-FileHash $_ -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Set-Content dist/SHA256SUMS.txt -Encoding ascii
+          Get-Content dist/SHA256SUMS.txt
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.zip
+
+      - name: Create release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $repo = '${{ github.repository }}'
+          $notes = @"
+          ## Download
+
+          - ``AutoBrightness-$env:VERSION-win-x64.zip``: most PCs
+          - ``AutoBrightness-$env:VERSION-win-arm64.zip``: Windows on ARM
+
+          Unzip anywhere and run ``AutoBrightness.exe``. It needs Twinkle Tray running and a USB webcam that allows manual exposure. No installer, and no .NET or Windows App SDK install is needed.
+
+          ## Verify this build
+
+          Each zip was built from this tag by GitHub Actions and has a signed build provenance attestation:
+
+          ``````
+          gh attestation verify AutoBrightness-$env:VERSION-win-x64.zip --repo $repo
+          ``````
+
+          SHA-256 checksums are in ``SHA256SUMS.txt``. The executable is not Authenticode-signed, so Windows SmartScreen may warn on first run.
+          "@
+          gh release create '${{ github.ref_name }}' dist/* --repo $repo --title "AutoBrightness $env:VERSION" --notes "$notes" --generate-notes --verify-tag

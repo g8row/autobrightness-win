@@ -483,3 +483,7 @@ $RECYCLE.BIN/
 
 # Local probe output
 probe-output/
+
+# Release builds
+artifacts/
+dist/
