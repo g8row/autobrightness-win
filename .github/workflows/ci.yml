@@ -23,3 +23,10 @@ jobs:
 
       - name: Test
         run: dotnet test --project tests/AutoBrightness.Core.Tests -c Release --no-build
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          dotnet publish src/AutoBrightness.App -c Release -r win-x64 --self-contained true -o publish/win-x64
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dotnet build installer -c Release -p:InstallerPlatform=x64 -p:PublishDir="$PWD/publish/win-x64/" -o msi

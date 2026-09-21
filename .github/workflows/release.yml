@@ -30,22 +30,26 @@ jobs:
       - name: Test
         run: dotnet test --project tests/AutoBrightness.Core.Tests -c Release
 
-      - name: Publish
+      - name: Publish and build installers
         shell: pwsh
         run: |
           New-Item -ItemType Directory dist | Out-Null
-          foreach ($rid in 'win-x64', 'win-arm64') {
+          foreach ($arch in 'x64', 'arm64') {
+            $rid = "win-$arch"
             dotnet publish src/AutoBrightness.App -c Release -r $rid --self-contained true `
               -p:Version=$env:VERSION -p:ContinuousIntegrationBuild=true -o "publish/$rid"
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
-            Compress-Archive -Path "publish/$rid/*" -DestinationPath "dist/AutoBrightness-$env:VERSION-$rid.zip" -CompressionLevel Optimal
+            dotnet build installer -c Release -p:InstallerPlatform=$arch -p:Version=$env:VERSION `
+              -p:PublishDir="$PWD/publish/$rid/" -o "msi/$rid"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            Copy-Item "msi/$rid/AutoBrightness.msi" "dist/AutoBrightness-$env:VERSION-$rid.msi"
           }
 
       - name: Checksums
         shell: pwsh
         run: |
           # LF line endings so `sha256sum -c SHA256SUMS.txt` works as well as Get-FileHash.
-          $lines = Get-ChildItem dist/*.zip | ForEach-Object {
+          $lines = Get-ChildItem dist/*.msi | ForEach-Object {
             "$((Get-FileHash $_ -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
           }
           [IO.File]::WriteAllText("$PWD/dist/SHA256SUMS.txt", (($lines -join "`n") + "`n"))
@@ -54,7 +58,7 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/*.zip
+          subject-path: dist/*.msi
 
       - name: Create release
         shell: pwsh
@@ -63,21 +67,23 @@ jobs:
         run: |
           $repo = '${{ github.repository }}'
           $notes = @"
-          ## Download
+          ## Install
 
-          - ``AutoBrightness-$env:VERSION-win-x64.zip``: most PCs
-          - ``AutoBrightness-$env:VERSION-win-arm64.zip``: Windows on ARM
+          - ``AutoBrightness-$env:VERSION-win-x64.msi``: most PCs
+          - ``AutoBrightness-$env:VERSION-win-arm64.msi``: Windows on ARM
 
-          Unzip anywhere and run ``AutoBrightness.exe``. It needs Twinkle Tray running and a USB webcam that allows manual exposure. No installer, and no .NET or Windows App SDK install is needed.
+          Run the installer. It installs for your user only (no administrator prompt) into ``%LOCALAPPDATA%\Programs\AutoBrightness``, adds a Start menu shortcut and starts the app. Newer versions upgrade in place; uninstall from Settings > Apps. Your settings and camera calibration in ``%LOCALAPPDATA%\AutoBrightness`` are kept.
+
+          AutoBrightness needs Twinkle Tray running and a USB webcam that allows manual exposure.
 
           ## Verify this build
 
-          Each zip was built from this tag by GitHub Actions and has a signed build provenance attestation:
+          Each installer was built from this tag by GitHub Actions and has a signed build provenance attestation:
 
           ``````
-          gh attestation verify AutoBrightness-$env:VERSION-win-x64.zip --repo $repo
+          gh attestation verify AutoBrightness-$env:VERSION-win-x64.msi --repo $repo
           ``````
 
-          SHA-256 checksums are in ``SHA256SUMS.txt``. The executable is not Authenticode-signed, so Windows SmartScreen may warn on first run.
+          SHA-256 checksums are in ``SHA256SUMS.txt``. The installer is not Authenticode-signed, so Windows SmartScreen may warn before it runs.
           "@
           gh release create '${{ github.ref_name }}' dist/* --repo $repo --title "AutoBrightness $env:VERSION" --notes "$notes" --generate-notes --verify-tag

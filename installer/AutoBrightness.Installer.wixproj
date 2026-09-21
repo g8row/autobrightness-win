@@ -1,0 +1,24 @@
+﻿<Project Sdk="WixToolset.Sdk/5.0.2">
+
+  <!--
+    Per-user MSI around a self-contained publish of the app. Build after publishing, e.g.:
+      dotnet publish src/AutoBrightness.App -c Release -r win-x64 -o artifacts/win-x64
+      dotnet build installer -c Release -p:InstallerPlatform=x64 -p:Version=1.2.3
+  -->
+  <PropertyGroup>
+    <OutputName>AutoBrightness</OutputName>
+    <InstallerPlatform Condition="'$(InstallerPlatform)' == ''">x64</InstallerPlatform>
+    <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\artifacts\win-$(InstallerPlatform)\</PublishDir>
+    <!-- MSI versions are numeric only: 1.2.3-beta.1 installs as 1.2.3. -->
+    <MsiVersion>$([System.Text.RegularExpressions.Regex]::Replace('$(Version)', '-.*$', ''))</MsiVersion>
+    <DefineConstants>ProductVersion=$(MsiVersion);PublishDir=$(PublishDir)</DefineConstants>
+    <!--
+      ICE38/ICE64/ICE91 insist that per-user files use registry key paths and RemoveFolder entries, which
+      the file harvesting below does not generate; MSI still removes the files and empty folders it installed.
+      ICE03 rejects the multi-language IDs some Windows App SDK DLLs declare in their version resources.
+    -->
+    <SuppressIces>ICE03;ICE38;ICE64;ICE91</SuppressIces>
+  </PropertyGroup>
+
+</Project>
+

@@ -14,19 +14,26 @@ calibration run and converts the picture into a light level that stays the same 
 |---|---|
 | ![Camera page](docs/screenshots/camera.png) | ![Curve editor](docs/screenshots/curve.png) |
 
-## Download
+## Install
 
-Get the zip for your PC from [Releases](https://github.com/g8row/autobrightness-win/releases): `win-x64` for most PCs, `win-arm64` for Windows on ARM. Unzip it anywhere and run `AutoBrightness.exe`; nothing needs installing.
+Download the installer for your PC from [Releases](https://github.com/g8row/autobrightness-win/releases):
+`win-x64` for most PCs, `win-arm64` for Windows on ARM.
 
-Each release is built from its tag by [GitHub Actions](.github/workflows/release.yml) and carries a signed
+- It installs for your user only, with no administrator prompt, into `%LOCALAPPDATA%\Programs\AutoBrightness`.
+- It adds a Start menu shortcut and starts the app.
+- Newer versions upgrade in place and close the running app first.
+- Uninstall from **Settings > Apps**. That also removes *Start with Windows*; your settings and camera
+  calibration in `%LOCALAPPDATA%\AutoBrightness` are kept.
+
+Each installer is built from its release tag by [GitHub Actions](.github/workflows/release.yml) and carries a signed
 [build provenance attestation](https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations).
-To check that a zip really came from this repository's workflow:
+To check that an installer really came from this repository's workflow:
 
 ```
-gh attestation verify AutoBrightness-0.1.0-win-x64.zip --repo g8row/autobrightness-win
+gh attestation verify AutoBrightness-0.2.0-win-x64.msi --repo g8row/autobrightness-win
 ```
 
-SHA-256 checksums are in each release's `SHA256SUMS.txt`. The executable isn't code-signed, so SmartScreen may warn the first time you run it.
+SHA-256 checksums are in each release's `SHA256SUMS.txt`. The installer isn't code-signed, so SmartScreen may warn before it runs.
 
 ## How it works
 
@@ -69,7 +76,14 @@ Command-line switches:
 
 Set `AUTOBRIGHTNESS_DATA` to use a different data folder (portable use, or a second copy for testing).
 
-To release, push a tag such as `v0.2.0`; the release workflow tests, builds both architectures, attests and publishes.
+To build the installer locally, publish the app and then build `installer/`:
+
+```
+dotnet publish src/AutoBrightness.App -c Release -r win-x64 --self-contained true -o artifacts/win-x64
+dotnet build installer -c Release -p:InstallerPlatform=x64
+```
+
+To release, push a tag such as `v0.2.0`. The release workflow tests, builds the x64 and ARM64 installers, attests them and publishes the release.
 
 ## Layout
 
@@ -77,6 +91,7 @@ To release, push a tag such as `v0.2.0`; the release workflow tests, builds both
 |---|---|
 | `src/AutoBrightness.Core` | Camera metering, calibration, crash recovery, Twinkle Tray client, control loop, settings (no UI) |
 | `src/AutoBrightness.App` | WinUI 3 tray app: dashboard, camera and calibration page, curve editor, settings |
+| `installer` | WiX MSI: per-user install, Start menu shortcut, upgrades and uninstall cleanup |
 | `tests/AutoBrightness.Core.Tests` | Unit tests, including a simulated camera |
 | `tools/abctl` | Camera-only command-line diagnostics: `cameras`, `calibrate`, `measure`, `frames`, `startup`, `simulate-crash`, `recover` |
 | `spikes/CameraProbe` | The first exploration spike (uses DirectShow; kept for reference) |

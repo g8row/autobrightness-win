@@ -22,7 +22,17 @@ public partial class App : Application
         if (!main.IsCurrent)
         {
             var activation = AppInstance.GetCurrent().GetActivatedEventArgs();
+            var mainPid = (int)main.ProcessId;
             await Task.Run(() => main.RedirectActivationToAsync(activation).AsTask());
+            if (Environment.GetCommandLineArgs().Contains(ExitArgument, StringComparer.OrdinalIgnoreCase))
+            {
+                // Callers such as the installer need the files unlocked when this returns.
+                await Task.Run(() =>
+                {
+                    try { System.Diagnostics.Process.GetProcessById(mainPid).WaitForExit(15_000); }
+                    catch (ArgumentException) { /* already gone */ }
+                });
+            }
             Exit();
             return;
         }

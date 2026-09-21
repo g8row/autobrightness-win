@@ -1,0 +1,81 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <!-- The UpgradeCode must never change: it is how new versions find and replace old ones. -->
+  <Package Name="AutoBrightness"
+           Manufacturer="Alexander Gurov"
+           Version="$(ProductVersion)"
+           UpgradeCode="80524D2E-1E68-4DC5-AD24-704C707D7940"
+           Scope="perUser"
+           Compressed="yes">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of AutoBrightness is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="AppIcon" SourceFile="$(PublishDir)Assets\AppIcon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/g8row/autobrightness-win" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/g8row/autobrightness-win/issues" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" />
+
+    <!-- %LOCALAPPDATA%\Programs\AutoBrightness, like other per-user apps; no administrator rights needed. -->
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="AutoBrightness" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut">
+        <Shortcut Id="AppShortcut"
+                  Name="AutoBrightness"
+                  Description="Automatic monitor brightness from your webcam"
+                  Target="[INSTALLFOLDER]AutoBrightness.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="AppIcon" />
+        <RegistryValue Root="HKCU" Key="Software\AutoBrightness" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <Feature Id="Main">
+      <Files Directory="INSTALLFOLDER" Include="$(PublishDir)**" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+
+    <!--
+      Close a running copy before its files are replaced or removed. The app's exit switch asks the
+      running instance to shut down cleanly (restoring the camera's settings) and waits for it to exit.
+    -->
+    <CustomAction Id="CloseRunningApp"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[INSTALLFOLDER]AutoBrightness.exe&quot; --exit"
+                  Execute="immediate"
+                  Return="ignore" />
+
+    <!--
+      The app's "Start with Windows" option writes a Run value; remove it when the app is uninstalled.
+      Deferred and impersonated: it runs as the user, in the script with the rest of the removal.
+    -->
+    <CustomAction Id="RemoveStartupEntry"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand="reg.exe delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v AutoBrightness /f"
+                  Execute="deferred"
+                  Impersonate="yes"
+                  Return="ignore" />
+
+    <CustomAction Id="LaunchApp"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[INSTALLFOLDER]AutoBrightness.exe&quot;"
+                  Execute="immediate"
+                  Return="asyncNoWait" />
+
+    <InstallExecuteSequence>
+      <Custom Action="CloseRunningApp" Before="InstallValidate" Condition="Installed OR WIX_UPGRADE_DETECTED" />
+      <Custom Action="RemoveStartupEntry" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="LaunchApp" After="InstallFinalize" Condition="NOT REMOVE AND UILevel &gt; 2" />
+    </InstallExecuteSequence>
+
+  </Package>
+</Wix>
