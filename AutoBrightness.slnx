@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AutoBrightness.Core/AutoBrightness.Core.csproj" />
+  </Folder>
+</Solution>
