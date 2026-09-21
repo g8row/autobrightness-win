@@ -65,8 +65,7 @@ public sealed class Calibrator(CameraDevice device)
                 $"{Seconds(e)}: mean {h.Mean:F1}, clipped {h.FractionAtOrAbove(ExposurePlanner.ClipLevel):P0}");
         }
 
-        var black = FitBlack(sweep);
-        var (gamma, spread, used) = FitGamma(sweep, black);
+        var (black, gamma, spread, used) = FitResponse(sweep);
         Report(0.7, "Response curve", $"black level {black:F1}, gamma {gamma:F2} from {used} exposures (consistency ±{spread:F2} stops)");
         if (used < 3)
         {
@@ -142,35 +141,39 @@ public sealed class Calibrator(CameraDevice device)
         return 10;
     }
 
-    /// <summary>The black pedestal is the median at the shortest exposure, if that image is actually dark.</summary>
-    internal static double FitBlack(IReadOnlyList<(int Exposure, Histogram Histogram)> sweep)
-    {
-        var darkest = sweep.OrderBy(p => p.Exposure).First().Histogram;
-        var median = darkest.Percentile(0.5);
-        return median <= 20 ? median : 0;
-    }
-
     /// <summary>
-    /// Finds the gamma that makes log2(mean linear light) - exposure the same at every well-exposed point,
-    /// which is what a correct response model must do for a static scene.
+    /// Fits the black pedestal and gamma together: the right model makes log2(mean linear light) - exposure
+    /// the same at every well-exposed point of a static scene. Only points well above any plausible pedestal
+    /// are used, so near-black frames (dominated by quantization) do not drive the fit.
     /// </summary>
-    internal static (double Gamma, double Spread, int Used) FitGamma(IReadOnlyList<(int Exposure, Histogram Histogram)> sweep, double black)
+    internal static (double Black, double Gamma, double Spread, int Used) FitResponse(IReadOnlyList<(int Exposure, Histogram Histogram)> sweep)
     {
         var usable = sweep
-            .Where(p => p.Histogram.Mean >= black + 8 && p.Histogram.Mean <= 200
-                        && p.Histogram.FractionAtOrAbove(ExposurePlanner.ClipLevel) <= 0.01)
+            .Where(p => p.Histogram.Mean is >= 12 and <= 200 && p.Histogram.FractionAtOrAbove(ExposurePlanner.ClipLevel) <= 0.01)
             .ToList();
-        if (usable.Count < 3) return (2.2, double.NaN, usable.Count);
+        if (usable.Count < 3) return (0, 2.2, double.NaN, usable.Count);
 
-        var best = (Gamma: 2.2, Spread: double.MaxValue);
-        for (var g = 0.5; g <= 3.5; g += 0.01)
+        // The pedestal cannot exceed what the darkest frame shows.
+        var maxBlack = Math.Min(20, sweep.OrderBy(p => p.Exposure).First().Histogram.Percentile(0.5));
+        double Spread(double black, double gamma)
         {
-            var model = new ResponseModel(black, g);
-            var evs = usable.Select(p => model.Ev(p.Histogram, p.Exposure, 1.0)).ToList();
-            var spread = StdDev(evs);
-            if (spread < best.Spread) best = (g, spread);
+            var model = new ResponseModel(black, gamma);
+            return StdDev(usable.Select(p => model.Ev(p.Histogram, p.Exposure, 1.0)).ToList());
         }
-        return (Math.Round(best.Gamma, 2), best.Spread, usable.Count);
+
+        var best = (Black: 0.0, Gamma: 2.2, Spread: double.MaxValue);
+        for (var b = 0.0; b <= maxBlack; b += 0.5)
+        for (var g = 0.5; g <= 3.5; g += 0.02)
+        {
+            var s = Spread(b, g);
+            if (s < best.Spread) best = (b, g, s);
+        }
+        for (var g = best.Gamma - 0.02; g <= best.Gamma + 0.02; g += 0.002)
+        {
+            var s = Spread(best.Black, g);
+            if (s < best.Spread) best = (best.Black, g, s);
+        }
+        return (best.Black, Math.Round(best.Gamma, 3), best.Spread, usable.Count);
     }
 
     private static double StdDev(IReadOnlyCollection<double> xs)

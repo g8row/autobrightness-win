@@ -14,11 +14,22 @@ public sealed record LightReading(
     TimeSpan Duration,
     LumaFrame Frame);
 
+public interface ILightMeter : IAsyncDisposable
+{
+    CameraDevice Device { get; }
+    CameraProfile Profile { get; set; }
+    Roi Roi { get; set; }
+    event Action<LumaFrame>? PreviewFrame;
+    Task<LightReading> MeasureAsync(CancellationToken ct = default);
+    Task StartPreviewAsync();
+    Task StopPreviewAsync();
+}
+
 /// <summary>
 /// Measures relative scene luminance with a locked-exposure camera. The camera is opened only for the
 /// duration of a measurement unless a preview holds it open.
 /// </summary>
-public sealed class LightMeter : IAsyncDisposable
+public sealed class LightMeter : ILightMeter
 {
     private const int FramesPerReading = 3;
     private const int MaxAttempts = 8;

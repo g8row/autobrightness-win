@@ -37,7 +37,7 @@ public sealed class AutoBrightnessController : IAsyncDisposable
 
     private readonly SettingsStore _store;
     private readonly IBrightnessBackend _backend;
-    private readonly Func<CameraDevice, CameraProfile, LightMeter> _meterFactory;
+    private readonly Func<CameraDevice, CameraProfile, ILightMeter> _meterFactory;
     private readonly LightSmoother _smoother;
     private readonly WritePolicy _policy;
     private readonly BrightnessCurve _curve;
@@ -48,7 +48,7 @@ public sealed class AutoBrightnessController : IAsyncDisposable
     private readonly SemaphoreSlim _sampleGate = new(1, 1);
     private readonly CancellationTokenSource _stop = new();
 
-    private LightMeter? _meter;
+    private ILightMeter? _meter;
     private IReadOnlyList<TwinkleMonitor> _monitors = [];
     private DateTime _monitorsFetched = DateTime.MinValue;
     private DateTime? _lastSample;
@@ -56,7 +56,7 @@ public sealed class AutoBrightnessController : IAsyncDisposable
     private Task? _loop;
 
     public AutoBrightnessController(SettingsStore store, IBrightnessBackend backend,
-        Func<CameraDevice, CameraProfile, LightMeter>? meterFactory = null)
+        Func<CameraDevice, CameraProfile, ILightMeter>? meterFactory = null)
     {
         _store = store;
         _backend = backend;
@@ -72,7 +72,7 @@ public sealed class AutoBrightnessController : IAsyncDisposable
     public event Action<ControllerSnapshot>? Updated;
 
     public ControllerSnapshot? Last { get; private set; }
-    public LightMeter? Meter => _meter;
+    public ILightMeter? Meter => _meter;
     public DateTime? PausedUntil { get; private set; }
 
     public IReadOnlyList<HistoryPoint> History
@@ -135,6 +135,9 @@ public sealed class AutoBrightnessController : IAsyncDisposable
         lock (_history) _history.Clear();
         SampleNow();
     }
+
+    /// <summary>Runs one sample immediately; for tests.</summary>
+    internal Task SampleOnceAsync(CancellationToken ct = default) => SampleAsync(DateTime.Now, ct);
 
     public void Start()
     {
