@@ -18,16 +18,17 @@ public sealed class TwinkleUnavailableException(string message, Exception? inner
 
 /// <summary>
 /// Client for Twinkle Tray's local command pipe (\\.\pipe\twinkle-tray\cmds), present in the Store and
-/// installer builds since 1.16. Messages are JSON; "set" has no reply.
+/// installer builds since 1.16. Messages are JSON, and every message gets a reply.
 /// </summary>
-public sealed class TwinkleClient : IBrightnessBackend
+public sealed class TwinkleClient(string pipeName = TwinkleClient.DefaultPipeName) : IBrightnessBackend
 {
-    private const string PipeName = @"twinkle-tray\cmds";
+    public const string DefaultPipeName = @"twinkle-tray\cmds";
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(2);
+    private readonly string _pipeName = pipeName;
 
     public async Task<IReadOnlyList<TwinkleMonitor>> ListAsync(CancellationToken ct = default)
     {
-        var reply = await SendAsync(new { type = "list" }, expectReply: true, ct);
+        var reply = await SendAsync(new { type = "list" }, ct);
         var root = JsonNode.Parse(reply) as JsonObject ?? throw new TwinkleUnavailableException($"Unexpected reply from Twinkle Tray: {reply}");
         return root.Select(kv => new TwinkleMonitor(
                 kv.Key,
@@ -39,30 +40,32 @@ public sealed class TwinkleClient : IBrightnessBackend
 
     public async Task<int> GetBrightnessAsync(string monitorKey, CancellationToken ct = default)
     {
-        var reply = await SendAsync(new { type = "get", monitor = monitorKey, property = "brightness" }, expectReply: true, ct);
+        var reply = await SendAsync(new { type = "get", monitor = monitorKey, property = "brightness" }, ct);
         return int.TryParse(reply.Trim(), out var v)
             ? v
             : throw new TwinkleUnavailableException($"Twinkle Tray did not report brightness for {monitorKey} ({reply}).");
     }
 
+    /// <summary>
+    /// Twinkle Tray answers every command, even "set" (with "undefined"). The reply must be read before closing:
+    /// if the pipe is already closed, Twinkle Tray's write fails with EPIPE and it shows an uncaught-exception dialog.
+    /// </summary>
     public Task SetBrightnessAsync(string monitorKey, int percent, CancellationToken ct = default) =>
-        SendAsync(new { type = "set", monitor = monitorKey, vcp = "brightness", value = Math.Clamp(percent, 0, 100) }, expectReply: false, ct);
+        SendAsync(new { type = "set", monitor = monitorKey, vcp = "brightness", value = Math.Clamp(percent, 0, 100) }, ct);
 
     private static int ReadInt(JsonNode? n) =>
         n is JsonValue v && v.TryGetValue<double>(out var d) ? (int)Math.Round(d) : 0;
 
-    private static async Task<string> SendAsync(object message, bool expectReply, CancellationToken ct)
+    private async Task<string> SendAsync(object message, CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(Timeout);
         try
         {
-            await using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+            await using var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
             await pipe.ConnectAsync(timeout.Token);
             await pipe.WriteAsync(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(message)), timeout.Token);
             await pipe.FlushAsync(timeout.Token);
-            if (!expectReply) return "";
-
             var buffer = new byte[1 << 16];
             var total = 0;
             // Replies arrive in one write; keep reading only while the JSON is still incomplete.
