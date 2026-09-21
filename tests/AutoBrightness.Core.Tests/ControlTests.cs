@@ -119,3 +119,57 @@ public class WritePolicyTests
         Assert.Equal(0, p.WritesToday);
     }
 }
+
+public class BrightnessRampTests
+{
+    private static readonly TransitionOptions Options = new() { Enabled = true, MaxStep = 2, StepInterval = TimeSpan.FromMilliseconds(500), MaxDuration = TimeSpan.FromSeconds(8) };
+
+    [Fact]
+    public void FadesInSmallEqualSteps() => Assert.Equal([32, 34, 36, 38, 40], BrightnessRamp.Steps(30, 40, Options));
+
+    [Fact]
+    public void FadesDown() => Assert.Equal([48, 47, 45], BrightnessRamp.Steps(50, 45, Options));
+
+    [Fact]
+    public void LongFadesTakeBiggerStepsInsteadOfLonger()
+    {
+        var steps = BrightnessRamp.Steps(0, 100, Options);
+        Assert.Equal(16, steps.Count); // 8 s / 0.5 s
+        Assert.Equal(100, steps[^1]);
+    }
+
+    [Fact]
+    public void DisabledJumpsStraightToTarget() => Assert.Equal([70], BrightnessRamp.Steps(30, 70, Options with { Enabled = false }));
+
+    [Fact]
+    public void NoChangeNoSteps() => Assert.Empty(BrightnessRamp.Steps(40, 40, Options));
+}
+
+public class SettingsMigrationTests
+{
+    [Fact]
+    public void Version1DefaultsMoveToInfrequentLargeJumps()
+    {
+        var v1 = new Settings.AppSettings
+        {
+            Version = 1,
+            WritePolicy = new WritePolicyOptions { MinStep = 3, BigStep = 15, MinInterval = TimeSpan.FromSeconds(60), DailyBudget = 200 },
+            Transitions = new TransitionOptions { Enabled = true },
+        };
+        var s = Settings.SettingsStore.Migrate(v1);
+
+        Assert.Equal(new WritePolicyOptions(), s.WritePolicy);
+        Assert.Equal(10, s.WritePolicy.MinStep);
+        Assert.Equal(TimeSpan.FromMinutes(15), s.WritePolicy.MinInterval);
+        Assert.False(s.Transitions.Enabled);
+        Assert.Equal(Settings.AppSettings.CurrentVersion, s.Version);
+    }
+
+    [Fact]
+    public void CustomisedLimitsAreKept()
+    {
+        var custom = new WritePolicyOptions { MinStep = 5, MinInterval = TimeSpan.FromMinutes(2) };
+        var s = Settings.SettingsStore.Migrate(new Settings.AppSettings { Version = 1, WritePolicy = custom });
+        Assert.Equal(custom, s.WritePolicy);
+    }
+}

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using AutoBrightness.App.Services;
 using AutoBrightness.Settings;
 using AutoBrightness.Twinkle;
@@ -33,6 +34,11 @@ public sealed partial class SettingsPage : Page
         BudgetBox.Value = s.WritePolicy.DailyBudget;
         BigStepBox.Value = s.WritePolicy.BigStep;
         LearnToggle.IsOn = s.LearnFromManual;
+        FadeToggle.IsOn = s.Transitions.Enabled;
+        FadeStepBox.Value = s.Transitions.MaxStep;
+        FadeIntervalBox.Value = s.Transitions.StepInterval.TotalMilliseconds;
+        FadeStepBox.IsEnabled = FadeIntervalBox.IsEnabled = s.Transitions.Enabled;
+        VersionText.Text = $"Version {typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown"}";
         PauseBox.Value = s.ManualPauseMinutes;
         StartupToggle.IsOn = StartupRegistration.IsEnabled;
         DataFolderText.Text = AppPaths.DataDirectory;
@@ -53,13 +59,20 @@ public sealed partial class SettingsPage : Page
             else if (sender == BudgetBox) s.WritePolicy = s.WritePolicy with { DailyBudget = (int)v };
             else if (sender == BigStepBox) s.WritePolicy = s.WritePolicy with { BigStep = (int)v };
             else if (sender == PauseBox) s.ManualPauseMinutes = v;
+            else if (sender == FadeStepBox) s.Transitions = s.Transitions with { MaxStep = (int)v };
+            else if (sender == FadeIntervalBox) s.Transitions = s.Transitions with { StepInterval = TimeSpan.FromMilliseconds(v) };
         });
     }
 
     private void OnToggleChanged(object sender, RoutedEventArgs e)
     {
         if (_loading) return;
-        AppServices.Store.Update(s => s.LearnFromManual = LearnToggle.IsOn);
+        AppServices.Store.Update(s =>
+        {
+            s.LearnFromManual = LearnToggle.IsOn;
+            s.Transitions = s.Transitions with { Enabled = FadeToggle.IsOn };
+        });
+        FadeStepBox.IsEnabled = FadeIntervalBox.IsEnabled = FadeToggle.IsOn;
     }
 
     private void OnStartupToggled(object sender, RoutedEventArgs e)

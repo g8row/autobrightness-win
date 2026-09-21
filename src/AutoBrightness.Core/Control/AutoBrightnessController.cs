@@ -369,11 +369,13 @@ public sealed class AutoBrightnessController : IAsyncDisposable
                     case WriteDecision.Write:
                         try
                         {
-                            await _backend.SetBrightnessAsync(monitor.Key, target, ct);
                             _policy.Record(now);
-                            track.Expected = target;
-                            note = $"Set {current}% → {target}%";
                             SaveWriteCount();
+                            var (reached, interrupted) = await FadeAsync(monitor.Key, current, target, settings.Transitions, ct);
+                            track.Expected = reached;
+                            note = interrupted
+                                ? $"Stopped at {reached}%: brightness was changed during the fade"
+                                : $"Set {current}% → {target}%";
                         }
                         catch (TwinkleUnavailableException ex)
                         {
@@ -394,6 +396,28 @@ public sealed class AutoBrightnessController : IAsyncDisposable
 
         if (_monitors.Count == 0) (status, level) = ("Twinkle Tray reports no monitors.", StatusLevel.Warning);
         return (result, status, level);
+    }
+
+    /// <summary>
+    /// Writes brightness in small steps so the change is a fade rather than a jump. Stops if someone else
+    /// (the user in Twinkle Tray) changes brightness mid-fade, and returns the last value written.
+    /// </summary>
+    private async Task<(int Reached, bool Interrupted)> FadeAsync(string key, int from, int to, TransitionOptions options, CancellationToken ct)
+    {
+        var last = from;
+        var steps = BrightnessRamp.Steps(from, to, options);
+        for (var i = 0; i < steps.Count; i++)
+        {
+            if (i > 0)
+            {
+                await Task.Delay(options.StepInterval, ct);
+                var now = await _backend.GetBrightnessAsync(key, ct);
+                if (Math.Abs(now - last) >= ManualTolerance) return (now, true);
+            }
+            await _backend.SetBrightnessAsync(key, steps[i], ct);
+            last = steps[i];
+        }
+        return (last, false);
     }
 
     private void SaveWriteCount() => _store.Update(s =>

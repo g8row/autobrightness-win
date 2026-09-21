@@ -50,7 +50,31 @@
                 <StackPanel Spacing="12">
                     <TextBlock Text="Brightness changes" Style="{StaticResource CardHeaderStyle}" />
                     <TextBlock Style="{StaticResource MetricCaptionStyle}" TextWrapping="Wrap"
-                               Text="Many monitors save every brightness change to memory that wears out after roughly 100,000 writes. These limits keep automatic changes infrequent." />
+                               Text="Many monitors save every brightness change to memory that wears out after roughly 100,000 writes. These limits keep automatic changes infrequent; with fading on, each change is several small writes." />
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="Fade between levels" />
+                            <TextBlock Text="Off: each change is one jump. On: blend over a few seconds in small steps." Style="{StaticResource MetricCaptionStyle}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <ToggleSwitch x:Name="FadeToggle" Grid.Column="1" Toggled="OnToggleChanged" MinWidth="0" />
+                    </Grid>
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="Fade step (%)" />
+                            <TextBlock Text="Smaller steps are smoother but take more writes." Style="{StaticResource MetricCaptionStyle}" />
+                        </StackPanel>
+                        <NumberBox x:Name="FadeStepBox" Grid.Column="1" Style="{StaticResource SettingNumber}" Minimum="1" Maximum="10" ValueChanged="OnNumberChanged" />
+                    </Grid>
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="Time per fade step (milliseconds)" />
+                            <TextBlock Text="Twinkle Tray merges updates closer than its update interval (500 ms by default)." Style="{StaticResource MetricCaptionStyle}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <NumberBox x:Name="FadeIntervalBox" Grid.Column="1" Style="{StaticResource SettingNumber}" Minimum="100" Maximum="5000" SmallChange="100" LargeChange="500" ValueChanged="OnNumberChanged" />
+                    </Grid>
                     <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <TextBlock Text="Smallest change worth making (%)" VerticalAlignment="Center" />
@@ -131,6 +155,7 @@
                         <Button Content="Open data folder" Click="OnOpenDataFolder" />
                         <TextBlock x:Name="DataFolderText" VerticalAlignment="Center" Style="{StaticResource MetricCaptionStyle}" />
                     </StackPanel>
+                    <TextBlock x:Name="VersionText" Style="{StaticResource MetricCaptionStyle}" IsTextSelectionEnabled="True" />
                 </StackPanel>
             </Border>
         </StackPanel>

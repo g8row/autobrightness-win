@@ -28,6 +28,10 @@ public sealed record MonitorSettings
 
 public sealed class AppSettings
 {
+    /// <summary>Bumped when defaults change in a way that should reach existing installs.</summary>
+    public const int CurrentVersion = 2;
+    public int Version { get; set; } = CurrentVersion;
+
     public ControlMode Mode { get; set; } = ControlMode.Preview;
     public string? CameraId { get; set; }
     public double SampleIntervalSeconds { get; set; } = 20;
@@ -37,6 +41,7 @@ public sealed class AppSettings
     public double BrightenSeconds { get; set; } = 20;
     public double DimSeconds { get; set; } = 60;
     public WritePolicyOptions WritePolicy { get; set; } = new();
+    public TransitionOptions Transitions { get; set; } = new();
     public bool LearnFromManual { get; set; } = true;
     public double ManualPauseMinutes { get; set; } = 20;
     public bool StartWithWindows { get; set; }
@@ -73,7 +78,7 @@ public sealed class SettingsStore
         try
         {
             if (File.Exists(_path))
-                return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(_path), Json) ?? new AppSettings();
+                return Migrate(JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(_path), Json) ?? new AppSettings());
         }
         catch (JsonException)
         {
@@ -81,6 +86,19 @@ public sealed class SettingsStore
             File.Copy(_path, _path + ".bad", overwrite: true);
         }
         return new AppSettings();
+    }
+
+    internal static AppSettings Migrate(AppSettings s)
+    {
+        if (s.Version < 2)
+        {
+            // v2: infrequent large changes applied as a single jump. Only untouched v1 defaults are replaced.
+            var v1 = new WritePolicyOptions { MinStep = 3, BigStep = 15, MinInterval = TimeSpan.FromSeconds(60), DailyBudget = 200 };
+            if (s.WritePolicy == v1) s.WritePolicy = new WritePolicyOptions();
+            s.Transitions = s.Transitions with { Enabled = false };
+        }
+        s.Version = AppSettings.CurrentVersion;
+        return s;
     }
 
     /// <summary>Applies a change and saves.</summary>

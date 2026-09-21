@@ -15,7 +15,7 @@ public sealed class ControllerTests : IDisposable
 
     public void Dispose() => Directory.Delete(_dir, recursive: true);
 
-    private async Task<AutoBrightnessController> CreateAsync(ControlMode mode)
+    private async Task<AutoBrightnessController> CreateAsync(ControlMode mode, Action<AppSettings>? configure = null)
     {
         var store = new SettingsStore(Path.Combine(_dir, "settings.json"));
         store.Update(s =>
@@ -23,6 +23,8 @@ public sealed class ControllerTests : IDisposable
             s.Mode = mode;
             s.Curve = [new(0, 10), new(4, 50), new(8, 90)];
             s.WritePolicy = new WritePolicyOptions { MinInterval = TimeSpan.Zero };
+            s.Transitions = new TransitionOptions { Enabled = true, StepInterval = TimeSpan.Zero };
+            configure?.Invoke(s);
         });
         var controller = new AutoBrightnessController(store, _backend, (_, _) => _meter);
         await controller.SelectCameraAsync(new CameraDevice(@"\\?\USB#VID_046D&PID_0819#x", "Test camera"));
@@ -49,7 +51,8 @@ public sealed class ControllerTests : IDisposable
         _meter.Ev = 4;
         await c.SampleOnceAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal([("UID260", 50)], _backend.Writes);
+        // 30 -> 50 fades in 2% steps.
+        Assert.Equal(Enumerable.Range(1, 10).Select(i => ("UID260", 30 + 2 * i)), _backend.Writes);
     }
 
     [Fact]
@@ -57,15 +60,37 @@ public sealed class ControllerTests : IDisposable
     {
         await using var c = await CreateAsync(ControlMode.Auto);
         _meter.Ev = 4;
-        await c.SampleOnceAsync(TestContext.Current.CancellationToken); // writes 50
+        await c.SampleOnceAsync(TestContext.Current.CancellationToken); // fades to 50
+        var writes = _backend.Writes.Count;
 
         _backend.Brightness = 35; // user drags Twinkle Tray's slider
         await c.SampleOnceAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(c.PausedUntil);
         Assert.Equal(35, c.EvaluateCurve(4), 6);
-        Assert.Single(_backend.Writes);
+        Assert.Equal(writes, _backend.Writes.Count);
         Assert.Equal(StatusLevel.Success, c.Last!.Level);
+    }
+
+    [Fact]
+    public async Task FadeStopsWhenUserTakesOver()
+    {
+        await using var c = await CreateAsync(ControlMode.Auto);
+        _meter.Ev = 8; // target 90 from 30
+        _backend.OnSet = (n, _) => { if (n == 3) _backend.Brightness = 70; }; // user drags the slider mid-fade
+        await c.SampleOnceAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, _backend.Writes.Count);
+        Assert.Contains("Stopped at 70%", c.Last!.Monitors.Single().Note);
+    }
+
+    [Fact]
+    public async Task FadeCanBeTurnedOff()
+    {
+        await using var c = await CreateAsync(ControlMode.Auto, s => s.Transitions = s.Transitions with { Enabled = false });
+        _meter.Ev = 4;
+        await c.SampleOnceAsync(TestContext.Current.CancellationToken);
+        Assert.Equal([("UID260", 50)], _backend.Writes);
     }
 
     [Fact]
@@ -117,6 +142,7 @@ public sealed class ControllerTests : IDisposable
         public int Brightness = 30;
         public bool Running = true;
         public List<(string, int)> Writes { get; } = [];
+        public Action<int, int>? OnSet;
 
         public Task<IReadOnlyList<TwinkleMonitor>> ListAsync(CancellationToken ct = default) => Running
             ? Task.FromResult<IReadOnlyList<TwinkleMonitor>>([new TwinkleMonitor("UID260", "27GL650F", "ddcci", Brightness)])
@@ -130,6 +156,7 @@ public sealed class ControllerTests : IDisposable
         {
             Writes.Add((monitorKey, percent));
             Brightness = percent;
+            OnSet?.Invoke(Writes.Count, percent);
             return Task.CompletedTask;
         }
     }

@@ -3,12 +3,12 @@ namespace AutoBrightness.Control;
 public sealed record WritePolicyOptions
 {
     /// <summary>Changes smaller than this (percent) are not worth a write.</summary>
-    public int MinStep { get; init; } = 3;
+    public int MinStep { get; init; } = 10;
     /// <summary>Changes at least this large bypass the interval and the daily budget.</summary>
-    public int BigStep { get; init; } = 15;
-    public TimeSpan MinInterval { get; init; } = TimeSpan.FromSeconds(60);
+    public int BigStep { get; init; } = 30;
+    public TimeSpan MinInterval { get; init; } = TimeSpan.FromMinutes(15);
     /// <summary>Monitors may store brightness in EEPROM rated for ~100k writes; this caps wear per day.</summary>
-    public int DailyBudget { get; init; } = 200;
+    public int DailyBudget { get; init; } = 48;
 }
 
 public enum WriteDecision { Write, TooSmall, TooSoon, BudgetExhausted }
