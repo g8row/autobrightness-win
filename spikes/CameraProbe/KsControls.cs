@@ -14,36 +14,59 @@ public static class KsControls
     private const uint KsPropertyTypeGet = 0x1;
     private const uint KsPropertyTypeSet = 0x2;
 
-    /// <summary>KSPROPERTY header: GUID Set, ULONG Id, ULONG Flags.</summary>
+    // KSPROPERTY_VIDEOPROCAMP_S / KSPROPERTY_CAMERACONTROL_S: KSPROPERTY header (GUID Set, ULONG Id, ULONG Flags),
+    // LONG Value, ULONG Flags, ULONG Capabilities; 36 bytes padded to 40 by the header's 8-byte alignment.
+    // Frame Server rejects anything but the full structure for both the request and the reply.
+    private const int StructSize = 40;
+
     private static byte[] Header(Guid set, uint id, uint flags)
     {
-        var b = new byte[24];
+        var b = new byte[StructSize];
         set.ToByteArray().CopyTo(b, 0);
         BitConverter.GetBytes(id).CopyTo(b, 16);
         BitConverter.GetBytes(flags).CopyTo(b, 20);
         return b;
     }
 
-    /// <summary>
-    /// Reads a KSPROPERTY_VIDEOPROCAMP_S / KSPROPERTY_CAMERACONTROL_S value. Both end in
-    /// LONG Value, ULONG Flags, ULONG Capabilities; the payload may or may not repeat the 24-byte header.
-    /// </summary>
-    public static (int Value, int Flags, int Raw)? Get(VideoDeviceController vdc, Guid set, uint id)
+    public static (int Value, int Flags)? Get(VideoDeviceController vdc, Guid set, uint id)
     {
-        var result = vdc.GetDevicePropertyByExtendedId(Header(set, id, KsPropertyTypeGet), 64u);
+        var result = vdc.GetDevicePropertyByExtendedId(Header(set, id, KsPropertyTypeGet), StructSize);
         if (result.Status != VideoDeviceControllerGetDevicePropertyStatus.Success || result.Value is not byte[] data)
             return null;
-        var offset = data.Length >= 36 ? 24 : 0;
-        return (BitConverter.ToInt32(data, offset), BitConverter.ToInt32(data, offset + 4), data.Length);
+        return (BitConverter.ToInt32(data, 24), BitConverter.ToInt32(data, 28));
     }
 
     public static VideoDeviceControllerSetDevicePropertyStatus Set(VideoDeviceController vdc, Guid set, uint id, int value, int flags)
     {
-        // Full KSPROPERTY_*_S structure: header, Value, Flags, Capabilities.
-        var payload = new byte[36];
-        Header(set, id, KsPropertyTypeSet).CopyTo(payload, 0);
-        BitConverter.GetBytes(value).CopyTo(payload, 24);
-        BitConverter.GetBytes(flags).CopyTo(payload, 28);
-        return vdc.SetDevicePropertyByExtendedId(Header(set, id, KsPropertyTypeSet), payload);
+        var s = Header(set, id, KsPropertyTypeSet);
+        BitConverter.GetBytes(value).CopyTo(s, 24);
+        BitConverter.GetBytes(flags).CopyTo(s, 28);
+        return vdc.SetDevicePropertyByExtendedId(s, s);
+    }
+}
+
+public static class KsDiagnostics
+{
+    /// <summary>Tries the plausible request layouts for extended-id property access and reports each status.</summary>
+    public static void Run(VideoDeviceController vdc)
+    {
+        foreach (var (name, set, id) in new[] { ("Exposure", KsControls.CameraControlSet, 4u), ("Gain", KsControls.VideoProcAmpSet, 9u), ("Brightness", KsControls.VideoProcAmpSet, 0u) })
+        {
+            foreach (var idLen in new[] { 24, 40 })
+            foreach (uint? max in new uint?[] { 40u, 128u, 1024u, 65536u })
+            {
+                var req = new byte[idLen];
+                set.ToByteArray().CopyTo(req, 0);
+                BitConverter.GetBytes(id).CopyTo(req, 16);
+                BitConverter.GetBytes(1u).CopyTo(req, 20); // KSPROPERTY_TYPE_GET
+                try
+                {
+                    var r = vdc.GetDevicePropertyByExtendedId(req, max);
+                    var bytes = r.Value as byte[];
+                    Console.WriteLine($"  GET {name,-10} id {idLen}B max {max?.ToString() ?? "null",-4}: {r.Status,-22} {(bytes is null ? r.Value?.GetType().Name ?? "-" : $"{bytes.Length}B {BitConverter.ToString(bytes)}")}");
+                }
+                catch (Exception ex) { Console.WriteLine($"  GET {name,-10} id {idLen}B max {max?.ToString() ?? "null",-4}: threw {ex.GetType().Name} {ex.Message.Split('\n')[0]}"); }
+            }
+        }
     }
 }

@@ -18,6 +18,7 @@ try
         case "rate": await WithCamera(opts, Rate); break;
         case "cycles": await Cycles(opts); break;
         case "plain": await Plain(opts); break;
+        case "ksdiag": await KsDiag(opts); break;
         default: Help(); break;
     }
 }
@@ -375,6 +376,15 @@ static async Task Plain(Dictionary<string, string> o)
         await Task.Delay(pause * 1000);
     }
     Console.WriteLine($"{ok}/{count} cycles succeeded");
+}
+
+static async Task KsDiag(Dictionary<string, string> o)
+{
+    var infos = await DeviceInformation.FindAllAsync(DeviceClass.VideoCapture);
+    var info = infos.First(i => i.Id.Contains(o.GetValueOrDefault("device") ?? "VID_046D", StringComparison.OrdinalIgnoreCase));
+    await using var g = await FrameGrabber.OpenAsync(info.Id);
+    await g.NextFrameAsync();
+    KsDiagnostics.Run(g.Capture.VideoDeviceController);
 }
 
 static async Task<string> FirstMonitor()
