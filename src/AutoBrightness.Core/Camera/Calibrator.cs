@@ -30,7 +30,7 @@ public sealed class Calibrator(CameraDevice device)
         var expMin = (int)Math.Ceiling(caps.Min);
         var framePeriodLog2 = (int)Math.Floor(Math.Log2(1.0 / Math.Max(1, session.FrameRate)));
         var expMax = Math.Min((int)Math.Floor(caps.Max), framePeriodLog2);
-        Report(0.05, "Exposure range", $"{Seconds(expMin)} to {Seconds(expMax)} (camera allows up to {Seconds((int)caps.Max)}; capped at the {session.FrameRate:F0} fps frame period)");
+        Report(0.05, "Exposure range", $"{FormatExposure(expMin)} to {FormatExposure(expMax)} (camera allows up to {FormatExposure((int)caps.Max)}; capped at the {session.FrameRate:F0} fps frame period)");
 
         // Gain: usable only if writes are confirmed by read-back.
         var gainRange = c.GainRange;
@@ -62,7 +62,7 @@ public sealed class Calibrator(CameraDevice device)
             var (h, _) = await session.CaptureAsync(FramesPerPoint, Roi.Full, ct);
             sweep.Add((e, h));
             Report(0.15 + 0.5 * (e - expMin + 1) / (expMax - expMin + 1), "Exposure sweep",
-                $"{Seconds(e)}: mean {h.Mean:F1}, clipped {h.FractionAtOrAbove(ExposurePlanner.ClipLevel):P0}");
+                $"{FormatExposure(e)}: mean {h.Mean:F1}, clipped {h.FractionAtOrAbove(ExposurePlanner.ClipLevel):P0}");
         }
 
         var (black, gamma, spread, used) = FitResponse(sweep);
@@ -81,7 +81,7 @@ public sealed class Calibrator(CameraDevice device)
         var noiseMeans = new List<double>();
         for (var i = 0; i < 12; i++) noiseMeans.Add((await session.NextFrameAsync(ct)).Histogram(Roi.Full).Mean);
         var noise = StdDev(noiseMeans);
-        Report(0.78, "Noise", $"{noise:F2} levels at {Seconds(mid)}");
+        Report(0.78, "Noise", $"{noise:F2} levels at {FormatExposure(mid)}");
 
         // Gain table, measured at an exposure dark enough to leave headroom.
         var gainTable = new List<GainStep> { new(gainMin, 1.0) };
@@ -128,7 +128,7 @@ public sealed class Calibrator(CameraDevice device)
         };
     }
 
-    internal static string Seconds(int log2) => log2 >= 0 ? $"{Math.Pow(2, log2):0.##} s" : $"1/{Math.Pow(2, -log2):0} s";
+    public static string FormatExposure(int log2) => log2 >= 0 ? $"{Math.Pow(2, log2):0.##} s" : $"1/{Math.Pow(2, -log2):0} s";
 
     /// <summary>First frame index after which every mean stays within 2% (or 1 level) of the final value.</summary>
     internal static int SettleFrames(IReadOnlyList<double> means)

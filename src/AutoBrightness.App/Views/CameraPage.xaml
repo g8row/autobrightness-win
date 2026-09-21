@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="AutoBrightness.App.Views.CameraPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer>
+        <StackPanel Padding="32,8,32,32" Spacing="16" MaxWidth="1200">
+            <TextBlock Text="Camera" Style="{StaticResource PageTitleStyle}" />
+
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Light sensor camera" Style="{StaticResource CardHeaderStyle}" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <ComboBox x:Name="CameraBox" MinWidth="320" DisplayMemberPath="Name" SelectionChanged="OnCameraChanged" />
+                        <Button Click="OnRefreshCameras" ToolTipService.ToolTip="Look for cameras again">
+                            <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                        </Button>
+                    </StackPanel>
+                    <TextBlock x:Name="CameraHint" TextWrapping="Wrap" Style="{StaticResource MetricCaptionStyle}" />
+                </StackPanel>
+            </Border>
+
+            <Grid ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Style="{StaticResource CardStyle}" VerticalAlignment="Top">
+                    <StackPanel Spacing="10">
+                        <Grid>
+                            <TextBlock Text="What the camera sees" Style="{StaticResource CardHeaderStyle}" />
+                            <ToggleSwitch x:Name="LiveToggle" HorizontalAlignment="Right" OnContent="Live" OffContent="Live"
+                                          Toggled="OnLiveToggled" MinWidth="0" Margin="0,-6,0,0" />
+                        </Grid>
+                        <Viewbox MaxHeight="360" Stretch="Uniform">
+                            <Grid x:Name="FrameHost" Width="320" Height="240"
+                                  Background="{ThemeResource ControlFillColorSecondaryBrush}">
+                                <Image x:Name="FrameImage" Stretch="Fill" />
+                                <Canvas x:Name="RoiCanvas" Background="Transparent"
+                                        PointerPressed="OnRoiPressed" PointerMoved="OnRoiMoved" PointerReleased="OnRoiReleased">
+                                    <Rectangle x:Name="RoiRect" Stroke="{ThemeResource AccentFillColorDefaultBrush}" StrokeThickness="2"
+                                               Fill="#22FFFFFF" StrokeDashArray="3,2" />
+                                </Canvas>
+                                <TextBlock x:Name="NoFrameText" Text="No image yet" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           Style="{StaticResource MetricCaptionStyle}" />
+                            </Grid>
+                        </Viewbox>
+                        <TextBlock x:Name="FrameStats" Text=" " Style="{StaticResource MetricCaptionStyle}" />
+                        <TextBlock TextWrapping="Wrap" Style="{StaticResource MetricCaptionStyle}"
+                                   Text="Drag on the image to choose the area to measure. A wall or ceiling works best; your face, windows and the screen's reflection make readings jump. The image is shown at the metering exposure, so it can look dark." />
+                        <Button Content="Measure the whole image" Click="OnResetRoi" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="1" Style="{StaticResource CardStyle}" VerticalAlignment="Top">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Calibration" Style="{StaticResource CardHeaderStyle}" />
+                        <TextBlock x:Name="CalibrationStatus" TextWrapping="Wrap" />
+                        <TextBlock TextWrapping="Wrap" Style="{StaticResource MetricCaptionStyle}"
+                                   Text="Calibration measures this camera: its usable exposure range, how long it takes to settle, its tone curve, how much gain helps in the dark, and its noise. Keep the room's lighting and the camera still for about 30 seconds while it runs. Recalibrating in brighter light gives a more precise tone curve." />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button x:Name="CalibrateButton" Style="{StaticResource AccentButtonStyle}" Click="OnCalibrate">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon Glyph="&#xE9E9;" FontSize="14" />
+                                    <TextBlock Text="Calibrate" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="CancelButton" Content="Cancel" Click="OnCancelCalibration" Visibility="Collapsed" />
+                        </StackPanel>
+                        <ProgressBar x:Name="CalibrationProgress" Visibility="Collapsed" Maximum="1" />
+                        <ItemsControl x:Name="CalibrationLog" />
+                        <StackPanel x:Name="ProfilePanel" Spacing="4" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

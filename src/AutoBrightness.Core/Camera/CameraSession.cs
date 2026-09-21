@@ -19,6 +19,7 @@ internal sealed class CameraSession : IAsyncDisposable
     private readonly MediaCapture _capture;
     private readonly MediaFrameReader _reader;
     private CameraControls.Snapshot? _snapshot;
+    private bool _remembered;
     private readonly Channel<LumaFrame> _frames = Channel.CreateBounded<LumaFrame>(
         new BoundedChannelOptions(4) { FullMode = BoundedChannelFullMode.DropOldest });
     private int _disposed;
@@ -41,7 +42,7 @@ internal sealed class CameraSession : IAsyncDisposable
         _reader.FrameArrived += OnFrameArrived;
     }
 
-    public static async Task<CameraSession> OpenAsync(CameraDevice device, int minWidth = 160)
+    public static async Task<CameraSession> OpenAsync(CameraDevice device, int minWidth = 160, bool remember = true)
     {
         var capture = new MediaCapture();
         try
@@ -91,6 +92,8 @@ internal sealed class CameraSession : IAsyncDisposable
             }
             // Snapshot after the stream starts: property reads before streaming delayed the first frame by ~4 s.
             session._snapshot = session.Controls.Save();
+            if (remember) CameraRecovery.Remember(device.Id, session._snapshot);
+            session._remembered = remember;
             return session;
         }
         catch (Exception ex) when (ex is not CameraException)
@@ -174,6 +177,7 @@ internal sealed class CameraSession : IAsyncDisposable
         if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
         _reader.FrameArrived -= OnFrameArrived;
         if (_snapshot is not null && RestoreOnDispose) Controls.Restore(_snapshot);
+        if (_remembered) CameraRecovery.Forget();
         try { await _reader.StopAsync(); } catch (Exception) { /* already stopped */ }
         _reader.Dispose();
         _capture.Dispose();

@@ -95,7 +95,7 @@ public class ResponseModelTests
     [InlineData(-13, "1/8192 s")]
     [InlineData(-5, "1/32 s")]
     [InlineData(0, "1 s")]
-    public void FormatsExposure(int log2, string expected) => Assert.Equal(expected, Calibrator.Seconds(log2));
+    public void FormatsExposure(int log2, string expected) => Assert.Equal(expected, Calibrator.FormatExposure(log2));
 }
 
 public class ExposurePlannerTests

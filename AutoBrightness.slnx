@@ -1,5 +1,8 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/AutoBrightness.App/AutoBrightness.App.csproj">
+      <Platform Project="x64" />
+    </Project>
     <Project Path="src/AutoBrightness.Core/AutoBrightness.Core.csproj" />
   </Folder>
   <Folder Name="/tests/">

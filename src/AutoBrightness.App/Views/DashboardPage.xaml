@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="AutoBrightness.App.Views.DashboardPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:AutoBrightness.App.Views">
+
+    <ScrollViewer>
+        <StackPanel Padding="32,8,32,32" Spacing="16" MaxWidth="1200">
+            <TextBlock Text="Dashboard" Style="{StaticResource PageTitleStyle}" />
+
+            <InfoBar x:Name="StatusBar" IsOpen="True" IsClosable="False" Severity="Informational" Title="Starting" />
+
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Light level" Style="{StaticResource MetricCaptionStyle}" />
+                        <TextBlock x:Name="LightValue" Text="–" Style="{StaticResource TitleLargeTextBlockStyle}" />
+                        <TextBlock x:Name="LightWords" Text=" " Style="{StaticResource BodyStrongTextBlockStyle}" />
+                        <TextBlock x:Name="LightDetail" Text=" " Style="{StaticResource MetricCaptionStyle}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="1" Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Target brightness" Style="{StaticResource MetricCaptionStyle}" />
+                        <TextBlock x:Name="TargetValue" Text="–" Style="{StaticResource TitleLargeTextBlockStyle}" />
+                        <TextBlock Text="from your brightness curve" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                        <TextBlock x:Name="TargetDetail" Text=" " Style="{StaticResource MetricCaptionStyle}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="2" Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Monitor brightness" Style="{StaticResource MetricCaptionStyle}" />
+                        <TextBlock x:Name="CurrentValue" Text="–" Style="{StaticResource TitleLargeTextBlockStyle}" />
+                        <TextBlock x:Name="CurrentName" Text="via Twinkle Tray" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                        <TextBlock x:Name="CurrentDetail" Text=" " Style="{StaticResource MetricCaptionStyle}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Mode" Style="{StaticResource CardHeaderStyle}" />
+                    <RadioButtons x:Name="ModeButtons" MaxColumns="3" SelectionChanged="OnModeChanged">
+                        <RadioButton Content="Off" Tag="Off" />
+                        <RadioButton Content="Preview" Tag="Preview" />
+                        <RadioButton Content="Automatic" Tag="Auto" />
+                    </RadioButtons>
+                    <TextBlock x:Name="ModeHelp" TextWrapping="Wrap" Style="{StaticResource MetricCaptionStyle}" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="MeasureButton" Click="OnMeasure">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                                <TextBlock Text="Measure now" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="PauseButton" Click="OnPause" />
+                        <TextBlock x:Name="NextSample" VerticalAlignment="Center" Margin="8,0,0,0" Style="{StaticResource MetricCaptionStyle}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardStyle}">
+                <Grid RowSpacing="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="240" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid>
+                        <TextBlock Text="History" Style="{StaticResource CardHeaderStyle}" />
+                        <ComboBox x:Name="RangeBox" HorizontalAlignment="Right" SelectedIndex="0" SelectionChanged="OnRangeChanged" MinWidth="120">
+                            <ComboBoxItem Content="Last hour" Tag="1" />
+                            <ComboBoxItem Content="Last 6 hours" Tag="6" />
+                            <ComboBoxItem Content="Last 24 hours" Tag="24" />
+                        </ComboBox>
+                    </Grid>
+                    <local:HistoryChart x:Name="Chart" Grid.Row="1" />
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="20">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Rectangle Width="14" Height="3" Fill="{ThemeResource SystemFillColorCautionBrush}" VerticalAlignment="Center" />
+                            <TextBlock Text="Light level (right axis)" Style="{StaticResource MetricCaptionStyle}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Rectangle Width="14" Height="3" Fill="{ThemeResource AccentFillColorDefaultBrush}" VerticalAlignment="Center" />
+                            <TextBlock Text="Monitor brightness" Style="{StaticResource MetricCaptionStyle}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Line X1="0" X2="14" Y1="2" Y2="2" Stroke="{ThemeResource AccentFillColorDefaultBrush}" StrokeThickness="2" StrokeDashArray="2,1" VerticalAlignment="Center" />
+                            <TextBlock Text="Target from curve" Style="{StaticResource MetricCaptionStyle}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

@@ -105,13 +105,39 @@ try
                 s.RestoreOnDispose = restore;
                 return sw.ElapsedMilliseconds;
             }
-            await FirstFrame("as found");
-            await FirstFrame("as found, then lock exposure -6 and keep it", s => { s.Controls.SetExposure(-6); s.Controls.TrySetGain(0); });
-            await FirstFrame("started with manual -6");
-            await FirstFrame("started with manual -6 (again), then back to auto", s => s.Controls.RestoreAuto());
-            await FirstFrame("started in auto");
+            try
+            {
+                await FirstFrame("as found");
+                await FirstFrame("as found, then lock exposure -6 and keep it", s => { s.Controls.SetExposure(-6); s.Controls.TrySetGain(0); });
+                await FirstFrame("started with manual -6");
+                await FirstFrame("started with manual -6 (again), then back to auto", s => s.Controls.RestoreAuto());
+                await FirstFrame("started in auto");
+            }
+            finally
+            {
+                // Never leave the camera in manual exposure, even if interrupted.
+                await using var s = await CameraSession.OpenAsync(camera, remember: false);
+                s.Controls.RestoreAuto();
+                s.RestoreOnDispose = false;
+            }
             break;
         }
+
+        case "simulate-crash":
+        {
+            // Lock exposure, then die without restoring, as a crash mid-measurement would.
+            var camera = Pick();
+            var s = await CameraSession.OpenAsync(camera);
+            s.Controls.SetExposure(-6);
+            await s.NextFrameAsync();
+            Console.WriteLine($"left {camera.Name} in manual exposure {s.Controls.Exposure}; exiting without cleanup");
+            Environment.Exit(3);
+            break;
+        }
+
+        case "recover":
+            Console.WriteLine(await CameraRecovery.RecoverAsync() ? "restored camera settings left by an unclean exit" : "nothing to recover");
+            break;
 
         default:
             Console.WriteLine("""

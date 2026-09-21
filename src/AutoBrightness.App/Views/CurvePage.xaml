@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="AutoBrightness.App.Views.CurvePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:AutoBrightness.App.Views">
+
+    <ScrollViewer>
+        <StackPanel Padding="32,8,32,32" Spacing="16" MaxWidth="1200">
+            <TextBlock Text="Brightness curve" Style="{StaticResource PageTitleStyle}" />
+
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock TextWrapping="Wrap" Style="{StaticResource MetricCaptionStyle}"
+                               Text="How bright the monitor should be at each light level. The easiest way to shape it is to use Twinkle Tray as usual: each time you change brightness, that becomes a learned point (filled) at the current light level. You can also drag points, double-click to add one, and right-click to remove one." />
+                    <local:CurveEditor x:Name="Editor" Height="380" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="Forget learned points" Click="OnForgetLearned" />
+                        <Button Content="Reset to default" Click="OnReset" />
+                        <TextBlock x:Name="Summary" VerticalAlignment="Center" Margin="8,0,0,0" Style="{StaticResource MetricCaptionStyle}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

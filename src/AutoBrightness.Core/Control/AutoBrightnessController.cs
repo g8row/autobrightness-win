@@ -139,6 +139,31 @@ public sealed class AutoBrightnessController : IAsyncDisposable
     /// <summary>Runs one sample immediately; for tests.</summary>
     internal Task SampleOnceAsync(CancellationToken ct = default) => SampleAsync(DateTime.Now, ct);
 
+    /// <summary>
+    /// Stops sampling until the returned handle is disposed, so something else (calibration) can own the camera.
+    /// The meter's camera is closed while suspended.
+    /// </summary>
+    public async Task<IAsyncDisposable> SuspendSamplingAsync()
+    {
+        await _sampleGate.WaitAsync();
+        return new Suspension(this);
+    }
+
+    private sealed class Suspension(AutoBrightnessController owner) : IAsyncDisposable
+    {
+        private int _released;
+
+        public ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _released, 1) == 0)
+            {
+                owner._sampleGate.Release();
+                owner.SampleNow();
+            }
+            return ValueTask.CompletedTask;
+        }
+    }
+
     public void Start()
     {
         _loop ??= Task.Run(() => LoopAsync(_stop.Token));
@@ -266,8 +291,8 @@ public sealed class AutoBrightnessController : IAsyncDisposable
         var now = DateTime.Now;
         var result = new List<MonitorState>();
         var status = settings.Mode == ControlMode.Auto
-            ? PausedUntil is { } p ? $"Paused until {p:HH:mm}." : "Adjusting brightness automatically."
-            : "Preview: showing the target brightness without changing it.";
+            ? PausedUntil is { } p ? $"Paused until {p:HH:mm}." : "Adjusting brightness to the room."
+            : "Showing the brightness it would set, without changing it.";
         var level = StatusLevel.Info;
 
         try
