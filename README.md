@@ -6,7 +6,7 @@ A webcam with **locked exposure** is used as an ambient light meter; readings ar
 through a user-editable curve to a brightness level, which is sent to Twinkle Tray over its local
 named pipe (`\.\pipe\twinkle-tray\cmds`).
 
-Status: early spike — verifying camera metering. See [`docs/`](docs/).
+Status: early spike — verifying camera metering. See [research](docs/research.md) and [probe findings](docs/camera-probe-findings.md).
 
 ## Layout
 
