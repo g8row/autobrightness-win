@@ -15,12 +15,18 @@ internal static class AppServices
     public static DispatcherQueue Dispatcher { get; private set; } = null!;
     public static IReadOnlyList<CameraDevice> Cameras { get; private set; } = [];
 
+    /// <summary>The main window was closed to the tray; pages keep running, so anything live should stop.</summary>
+    public static event Action? WindowHidden;
+
+    public static void NotifyWindowHidden() => WindowHidden?.Invoke();
+
     public static async Task InitializeAsync(DispatcherQueue dispatcher)
     {
         Dispatcher = dispatcher;
         // Alternative data folder (portable use, or a second instance for screenshots and tests).
         if (Environment.GetEnvironmentVariable("AUTOBRIGHTNESS_DATA") is { Length: > 0 } dataDir)
             AppPaths.DataDirectory = dataDir;
+        Log.Write($"Started {typeof(AppServices).Assembly.GetName().Version}; data folder {AppPaths.DataDirectory}");
         Store = new SettingsStore();
         // A previous run that died mid-measurement may have left the camera in manual exposure.
         await CameraRecovery.RecoverAsync();

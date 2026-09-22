@@ -32,6 +32,7 @@ public sealed partial class CameraPage : Page
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         AppServices.Controller.Updated += OnControllerUpdated;
+        AppServices.WindowHidden += OnWindowHidden;
         await LoadCamerasAsync(AppServices.Cameras);
         ShowRoi(AppServices.Store.Current.Roi);
         if (AppServices.Controller.Last?.Reading is { } r) ShowFrame(r.Frame);
@@ -40,9 +41,13 @@ public sealed partial class CameraPage : Page
     private async void OnUnloaded(object sender, RoutedEventArgs e)
     {
         AppServices.Controller.Updated -= OnControllerUpdated;
+        AppServices.WindowHidden -= OnWindowHidden;
         _calibration?.Cancel();
         await StopLiveAsync();
     }
+
+    /// <summary>A hidden window doesn't unload its page; without this the camera would stay on in the tray.</summary>
+    private async void OnWindowHidden() => await StopLiveAsync();
 
     private async Task LoadCamerasAsync(IReadOnlyList<CameraDevice> cameras)
     {
@@ -284,6 +289,11 @@ public sealed partial class CameraPage : Page
         catch (CameraException ex)
         {
             _log.Add(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            Log.Write("Calibration failed", ex);
+            _log.Add($"Calibration failed: {ex.Message}");
         }
         finally
         {

@@ -267,6 +267,7 @@ public sealed class AutoBrightnessController : IAsyncDisposable
     {
         if (_hold == reason) return;
         _hold = reason;
+        Log.Write(reason is null ? "Camera resumed" : $"Camera paused: {reason}");
         SampleNow();
     }
 

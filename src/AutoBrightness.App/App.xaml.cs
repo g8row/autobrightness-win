@@ -11,9 +11,17 @@ public partial class App : Application
 {
     private MainWindow? _window;
     private TrayIcon? _tray;
+    private SessionWatcher? _session;
     private bool _exiting;
 
-    public App() => InitializeComponent();
+    public App()
+    {
+        InitializeComponent();
+        // Leave a trace of anything that would otherwise end the process silently.
+        UnhandledException += (_, e) => Log.Write("Unhandled exception", e.Exception);
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => Log.Write("Unhandled exception", e.ExceptionObject as Exception);
+        TaskScheduler.UnobservedTaskException += (_, e) => Log.Write("Unobserved task exception", e.Exception);
+    }
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
@@ -48,7 +56,17 @@ public partial class App : Application
             return;
         }
 
-        await AppServices.InitializeAsync(DispatcherQueue.GetForCurrentThread());
+        try
+        {
+            await AppServices.InitializeAsync(DispatcherQueue.GetForCurrentThread());
+        }
+        catch (Exception ex)
+        {
+            Log.Write("Startup failed", ex);
+            MessageBox(0, $"AutoBrightness could not start: {ex.Message}\n\nDetails are in {Log.PathName}.", "AutoBrightness", 0x10 /* MB_ICONERROR */);
+            Exit();
+            return;
+        }
 
         _window = new MainWindow();
         _window.AppWindow.Closing += (sender, e) =>
@@ -56,10 +74,14 @@ public partial class App : Application
             if (_exiting) return;
             e.Cancel = true; // closing the window keeps the app running in the tray
             sender.Hide();
+            AppServices.NotifyWindowHidden();
         };
 
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_window);
         _tray = new TrayIcon(hwnd, Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico"), ShowWindow, TrayMenu);
+        // No camera while the screen is locked or off, or the PC is going to sleep.
+        _session = new SessionWatcher(hwnd, reason => AppServices.Controller.SetHold(reason));
+        AppServices.Controller.SetHold(_session.Reason);
         AppServices.Controller.Updated += s => AppServices.OnUi(() => UpdateTooltip(s));
 
         var background = Environment.GetCommandLineArgs().Contains(StartupRegistration.BackgroundArgument);
@@ -115,8 +137,12 @@ public partial class App : Application
     {
         _exiting = true;
         _tray?.Dispose();
+        _session?.Dispose();
         await AppServices.ShutdownAsync();
         _window?.Close();
         Exit();
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, EntryPoint = "MessageBoxW")]
+    private static extern int MessageBox(nint hwnd, string text, string caption, uint type);
 }
