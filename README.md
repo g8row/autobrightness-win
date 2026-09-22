@@ -107,3 +107,7 @@ To release, push a tag such as `v0.2.0`. The release workflow tests, builds the 
 
 Settings, camera profiles and state are stored in `%LOCALAPPDATA%\AutoBrightness`. `autobrightness.log` there records every
 brightness write, learned adjustment and unexpected error; it never contains camera images.
+
+## License
+
+[MIT](LICENSE)

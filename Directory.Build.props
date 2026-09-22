@@ -6,7 +6,7 @@
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <WindowsTargetFramework>net10.0-windows10.0.26100.0</WindowsTargetFramework>
     <!-- Release builds override this from the git tag (v1.2.3 -> 1.2.3). -->
-    <Version>0.1.0</Version>
+    <Version>0.3.0</Version>
     <Product>AutoBrightness</Product>
     <Copyright>Alexander Gurov</Copyright>
   </PropertyGroup>
