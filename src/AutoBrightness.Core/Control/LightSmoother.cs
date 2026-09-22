@@ -14,6 +14,9 @@ public sealed class LightSmoother(TimeSpan brightenTime, TimeSpan dimTime)
     public TimeSpan DimTime { get; set; } = dimTime;
     public double? Value { get; private set; }
 
+    /// <summary>Readings in the median window since the last reset (up to three).</summary>
+    public int Readings => _recent.Count;
+
     public double Add(double ev, DateTime time)
     {
         _recent.Enqueue(ev);

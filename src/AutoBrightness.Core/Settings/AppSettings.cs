@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using AutoBrightness.Camera;
 using AutoBrightness.Control;
@@ -24,6 +25,9 @@ public sealed record MonitorSettings
     public int Offset { get; init; }
     public int Min { get; init; }
     public int Max { get; init; } = 100;
+
+    /// <summary>The limits in order and within 0..100, whatever was saved.</summary>
+    public (int Min, int Max) Range => (Math.Clamp(Math.Min(Min, Max), 0, 100), Math.Clamp(Math.Max(Min, Max), 0, 100));
 }
 
 public sealed class AppSettings
@@ -47,8 +51,33 @@ public sealed class AppSettings
     public bool StartWithWindows { get; set; }
 
     // Persisted state rather than preferences.
+
+    /// <summary>Monitor writes per monitor key, so limits hold across restarts.</summary>
+    public Dictionary<string, WriteCounter> WriteCounters { get; set; } = [];
+    /// <summary>Single count kept by versions before per-monitor counters; seeds monitors that have none yet.</summary>
     public DateOnly WritesDay { get; set; }
     public int WritesToday { get; set; }
+
+    /// <summary>Replaces missing and out-of-range values (from a hand-edited or older file) with safe ones.</summary>
+    internal AppSettings Normalize()
+    {
+        static double Finite(double v, double fallback, double min, double max) =>
+            double.IsFinite(v) ? Math.Clamp(v, min, max) : fallback;
+
+        Curve = Curve?.Where(p => p is not null && double.IsFinite(p.Ev) && double.IsFinite(p.Brightness)).ToList() ?? [];
+        if (Curve.Count == 0) Curve = [.. BrightnessCurve.Default];
+        Monitors = Monitors?.Where(m => m?.Key is not null).ToList() ?? [];
+        WritePolicy = (WritePolicy ?? new WritePolicyOptions()).Normalized();
+        Transitions ??= new TransitionOptions();
+        WriteCounters ??= [];
+        Roi = Roi.Clamp();
+        SampleIntervalSeconds = Finite(SampleIntervalSeconds, 20, 5, 3600);
+        BrightenSeconds = Finite(BrightenSeconds, 20, 0, 3600);
+        DimSeconds = Finite(DimSeconds, 60, 0, 3600);
+        ManualPauseMinutes = Finite(ManualPauseMinutes, 20, 0, 1440);
+        if (!Enum.IsDefined(Mode)) Mode = ControlMode.Preview;
+        return this;
+    }
 }
 
 /// <summary>Loads and saves <see cref="AppSettings"/> as JSON in the app data folder.</summary>
@@ -75,17 +104,35 @@ public sealed class SettingsStore
 
     private AppSettings Load()
     {
-        try
+        for (var attempt = 1; ; attempt++)
         {
-            if (File.Exists(_path))
-                return Migrate(JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(_path), Json) ?? new AppSettings());
+            try
+            {
+                if (!File.Exists(_path)) return new AppSettings().Normalize();
+                var text = File.ReadAllText(_path);
+                var settings = JsonSerializer.Deserialize<AppSettings>(text, Json) ?? new AppSettings();
+                // Files written before the version field existed are version 1.
+                if (JsonNode.Parse(text) is JsonObject root && !root.ContainsKey(nameof(AppSettings.Version))) settings.Version = 1;
+                return Migrate(settings).Normalize();
+            }
+            catch (JsonException ex)
+            {
+                // Keep the unreadable file for inspection and start fresh.
+                Log.Write($"Settings file is not valid JSON; starting from defaults and keeping it as {_path}.bad", ex);
+                try { File.Copy(_path, _path + ".bad", overwrite: true); }
+                catch (Exception copy) when (copy is IOException or UnauthorizedAccessException) { }
+                return new AppSettings().Normalize();
+            }
+            catch (IOException) when (attempt < 3)
+            {
+                Thread.Sleep(200); // briefly locked, e.g. by a virus scanner or sync client
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Log.Write("Settings file could not be read; using defaults", ex);
+                return new AppSettings().Normalize();
+            }
         }
-        catch (JsonException)
-        {
-            // Keep the unreadable file for inspection and start fresh.
-            File.Copy(_path, _path + ".bad", overwrite: true);
-        }
-        return new AppSettings();
     }
 
     internal static AppSettings Migrate(AppSettings s)
@@ -95,13 +142,16 @@ public sealed class SettingsStore
             // v2: infrequent large changes applied as a single jump. Only untouched v1 defaults are replaced.
             var v1 = new WritePolicyOptions { MinStep = 3, BigStep = 15, MinInterval = TimeSpan.FromSeconds(60), DailyBudget = 200 };
             if (s.WritePolicy == v1) s.WritePolicy = new WritePolicyOptions();
-            s.Transitions = s.Transitions with { Enabled = false };
+            s.Transitions = (s.Transitions ?? new TransitionOptions()) with { Enabled = false };
         }
         s.Version = AppSettings.CurrentVersion;
         return s;
     }
 
-    /// <summary>Applies a change and saves.</summary>
+    /// <summary>
+    /// Applies a change and saves. Replace lists rather than editing them in place: other threads may be
+    /// reading the current ones.
+    /// </summary>
     public void Update(Action<AppSettings> change)
     {
         lock (_lock)

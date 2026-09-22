@@ -82,7 +82,7 @@ public sealed partial class DashboardPage : Page
         var monitor = s.Monitors.FirstOrDefault(m => m.Current is not null) ?? s.Monitors.FirstOrDefault();
         TargetDetail.Text = monitor?.Target is { } t && s.CurveBrightness is { } cb && Math.Abs(t - cb) >= 1
             ? $"{t}% for {monitor.Name} after its offset and limits"
-            : s.Mode == ControlMode.Auto ? $"Changes today: {s.WritesToday}" : " ";
+            : s.Mode == ControlMode.Auto ? $"Monitor writes today: {s.WritesToday}" : " ";
 
         CurrentValue.Text = monitor?.Current is { } c ? $"{c}%" : "–";
         CurrentName.Text = monitor?.Name ?? "via Twinkle Tray";

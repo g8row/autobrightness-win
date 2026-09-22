@@ -119,8 +119,8 @@ public sealed partial class SettingsPage : Page
         void Save(Func<MonitorSettings, MonitorSettings> change) => AppServices.Store.Update(s =>
         {
             var current = s.Monitors.FirstOrDefault(x => x.Key == monitor.Key) ?? settings;
-            s.Monitors.RemoveAll(x => x.Key == monitor.Key);
-            s.Monitors.Add(change(current) with { Name = monitor.Name });
+            // A new list rather than an edit: the control loop may be reading the old one.
+            s.Monitors = [.. s.Monitors.Where(x => x.Key != monitor.Key), change(current) with { Name = monitor.Name }];
         });
 
         var grid = new Grid { ColumnSpacing = 12 };

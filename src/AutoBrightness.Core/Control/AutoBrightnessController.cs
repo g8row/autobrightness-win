@@ -25,12 +25,15 @@ public sealed record ControllerSnapshot(
 
 /// <summary>
 /// The measurement and control loop: meter the room, smooth, map through the curve, and (in Auto mode)
-/// write brightness through Twinkle Tray within the write budget. Manual changes made in Twinkle Tray are
-/// detected between samples, learned into the curve, and pause automatic writes for a while.
+/// write brightness through Twinkle Tray within each monitor's write limits. Manual changes made in Twinkle
+/// Tray are detected between samples, pause automatic writes for a while, and are learned into the curve once
+/// the light reading is steady.
 /// </summary>
 public sealed class AutoBrightnessController : IAsyncDisposable
 {
     private const int ManualTolerance = 2;
+    /// <summary>Two raw readings this close (in stops) count as a steady light level for learning.</summary>
+    private const double LearnAgreement = 0.5;
     private static readonly TimeSpan StaleHistory = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan MonitorListRefresh = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromMinutes(10);
@@ -39,10 +42,10 @@ public sealed class AutoBrightnessController : IAsyncDisposable
     private readonly IBrightnessBackend _backend;
     private readonly Func<CameraDevice, CameraProfile, ILightMeter> _meterFactory;
     private readonly LightSmoother _smoother;
-    private readonly WritePolicy _policy;
     private readonly BrightnessCurve _curve;
     private readonly Lock _curveLock = new();
     private readonly Dictionary<string, MonitorTrack> _tracks = [];
+    private readonly Dictionary<string, WritePolicy> _policies = [];
     private readonly List<HistoryPoint> _history = [];
     private readonly SemaphoreSlim _wake = new(0, 1);
     private readonly SemaphoreSlim _sampleGate = new(1, 1);
@@ -53,6 +56,7 @@ public sealed class AutoBrightnessController : IAsyncDisposable
     private DateTime _monitorsFetched = DateTime.MinValue;
     private DateTime? _lastSample;
     private int _failures;
+    private volatile string? _hold;
     private Task? _loop;
 
     public AutoBrightnessController(SettingsStore store, IBrightnessBackend backend,
@@ -63,8 +67,6 @@ public sealed class AutoBrightnessController : IAsyncDisposable
         _meterFactory = meterFactory ?? ((d, p) => new LightMeter(d, p));
         var s = store.Current;
         _smoother = new LightSmoother(TimeSpan.FromSeconds(s.BrightenSeconds), TimeSpan.FromSeconds(s.DimSeconds));
-        _policy = new WritePolicy(s.WritePolicy);
-        _policy.Restore(s.WritesDay, s.WritesToday);
         _curve = new BrightnessCurve(s.Curve);
         _store.Changed += OnSettingsChanged;
     }
@@ -74,6 +76,9 @@ public sealed class AutoBrightnessController : IAsyncDisposable
     public ControllerSnapshot? Last { get; private set; }
     public ILightMeter? Meter => _meter;
     public DateTime? PausedUntil { get; private set; }
+
+    /// <summary>Shortest delay between fade steps, whatever the settings say; tests lower it.</summary>
+    internal TimeSpan MinFadeStepInterval { get; init; } = TimeSpan.FromMilliseconds(200);
 
     public IReadOnlyList<HistoryPoint> History
     {
@@ -126,14 +131,75 @@ public sealed class AutoBrightnessController : IAsyncDisposable
         SampleNow();
     }
 
-    /// <summary>Installs a new calibration profile; the smoothed history is on the old scale, so it restarts.</summary>
-    public void ApplyProfile(CameraProfile profile)
+    /// <summary>
+    /// Installs a new calibration profile. A new tone curve moves the light scale, so the brightness curve is
+    /// shifted by the difference it makes to the last reading, keeping the current brightness where it was.
+    /// </summary>
+    public async Task ApplyProfileAsync(CameraProfile profile)
     {
-        if (_meter is null) return;
-        _meter.Profile = profile;
-        _smoother.Reset();
-        lock (_history) _history.Clear();
+        await _sampleGate.WaitAsync();
+        try
+        {
+            if (_meter is null) return;
+            // An uncalibrated profile's scale is arbitrary; the default curve assumes a calibrated one.
+            var shift = _meter.Profile.IsCalibrated ? EvShift(_meter.Profile, _meter.Roi, profile, _meter.Roi) : null;
+            _meter.Profile = profile;
+            ShiftCurve(shift, "the new calibration");
+            _smoother.Reset();
+            lock (_history) _history.Clear();
+        }
+        finally
+        {
+            _sampleGate.Release();
+        }
         SampleNow();
+    }
+
+    /// <summary>Changes the measured area; the curve is shifted so the current scene keeps its brightness.</summary>
+    public async Task SetRoiAsync(Roi roi)
+    {
+        roi = roi.Clamp();
+        await _sampleGate.WaitAsync();
+        try
+        {
+            if (_meter is not null)
+            {
+                ShiftCurve(EvShift(_meter.Profile, _meter.Roi, _meter.Profile, roi), "the new measurement area");
+                _meter.Roi = roi;
+            }
+            _smoother.Reset();
+        }
+        finally
+        {
+            _sampleGate.Release();
+        }
+        _store.Update(s => s.Roi = roi);
+        SampleNow();
+    }
+
+    /// <summary>How far the last reading's light level moves under a new profile or measurement area.</summary>
+    private double? EvShift(CameraProfile oldProfile, Roi oldRoi, CameraProfile newProfile, Roi newRoi)
+    {
+        if (Last?.Reading is not { } r) return null;
+        static double? Factor(CameraProfile p, int gain) =>
+            p.GainTable.FirstOrDefault(g => g.Gain == gain)?.Factor ?? (p.GainTable.Count == 0 || !p.GainSupported ? 1.0 : null);
+        if (Factor(oldProfile, r.Gain) is not { } oldGain || Factor(newProfile, r.Gain) is not { } newGain) return null;
+        var before = oldProfile.Response.Ev(r.Frame.Histogram(oldRoi), r.Exposure, oldGain);
+        var after = newProfile.Response.Ev(r.Frame.Histogram(newRoi), r.Exposure, newGain);
+        return after - before;
+    }
+
+    private void ShiftCurve(double? shift, string reason)
+    {
+        if (shift is not { } s || !double.IsFinite(s) || Math.Abs(s) < 0.05) return;
+        List<CurvePoint> saved;
+        lock (_curveLock)
+        {
+            _curve.Shift(s);
+            saved = [.. _curve.Points];
+        }
+        _store.Update(x => x.Curve = saved);
+        Log.Write($"Curve shifted by {s:+0.00;-0.00} stops for {reason}");
     }
 
     /// <summary>Runs one sample immediately; for tests.</summary>
@@ -171,7 +237,14 @@ public sealed class AutoBrightnessController : IAsyncDisposable
 
     public void SampleNow()
     {
-        if (_wake.CurrentCount == 0) _wake.Release();
+        try
+        {
+            if (_wake.CurrentCount == 0) _wake.Release();
+        }
+        catch (SemaphoreFullException)
+        {
+            // Another thread woke the loop first.
+        }
     }
 
     public void Pause(TimeSpan duration)
@@ -186,13 +259,25 @@ public sealed class AutoBrightnessController : IAsyncDisposable
         SampleNow();
     }
 
+    /// <summary>
+    /// Stops using the camera while <paramref name="reason"/> is set (screen locked, display off, sleeping).
+    /// Brightness changes made meanwhile are not learned, and the first readings afterwards start fresh.
+    /// </summary>
+    public void SetHold(string? reason)
+    {
+        if (_hold == reason) return;
+        _hold = reason;
+        SampleNow();
+    }
+
     private void OnSettingsChanged()
     {
         var s = _store.Current;
         _smoother.BrightenTime = TimeSpan.FromSeconds(s.BrightenSeconds);
         _smoother.DimTime = TimeSpan.FromSeconds(s.DimSeconds);
-        _policy.Options = s.WritePolicy;
-        if (_meter is not null) _meter.Roi = s.Roi;
+        lock (_policies)
+            foreach (var policy in _policies.Values)
+                policy.Options = s.WritePolicy;
     }
 
     private async Task LoopAsync(CancellationToken ct)
@@ -213,6 +298,8 @@ public sealed class AutoBrightnessController : IAsyncDisposable
             }
             catch (Exception ex)
             {
+                _failures++;
+                Log.Write("Unexpected error while sampling", ex);
                 Publish(null, $"Unexpected error: {ex.Message}", StatusLevel.Error, [], DateTime.Now + delay);
             }
 
@@ -242,7 +329,16 @@ public sealed class AutoBrightnessController : IAsyncDisposable
 
         if (settings.Mode == ControlMode.Off)
         {
+            // Whatever happens to brightness while off is not a preference for whatever the light will be later.
+            ForgetObservations();
             Publish(null, "Off. The camera is not used.", StatusLevel.Info, [], null);
+            return;
+        }
+        if (_hold is { } hold)
+        {
+            ForgetObservations();
+            _smoother.Reset();
+            Publish(null, $"Paused while {hold}. The camera is not used.", StatusLevel.Info, [], null);
             return;
         }
         if (_meter is null)
@@ -259,17 +355,23 @@ public sealed class AutoBrightnessController : IAsyncDisposable
         }
         catch (CameraException ex)
         {
-            _failures++;
+            if (++_failures == 1) Log.Write($"Camera: {ex.Message}");
             Publish(null, ex.Message, StatusLevel.Error, [], nextSample);
             return;
         }
 
-        if (_lastSample is { } prev && now - prev > StaleHistory) _smoother.Reset();
+        if (_lastSample is { } prev && now - prev > StaleHistory)
+        {
+            // Long gap (sleep, camera trouble): old readings and observed brightness no longer apply.
+            _smoother.Reset();
+            ForgetObservations();
+        }
         _lastSample = now;
         var smoothed = _smoother.Add(reading.Ev, now);
         var curveValue = EvaluateCurve(smoothed);
 
-        var (monitors, status, level) = await UpdateMonitorsAsync(settings, smoothed, curveValue, ct);
+        var (monitors, status, level) = await UpdateMonitorsAsync(settings, reading.Ev, smoothed, ct);
+        curveValue = EvaluateCurve(smoothed);
         if (reading.Verdict == MeterVerdict.Saturated && level < StatusLevel.Warning)
             (status, level) = ("Too bright for the camera even at its shortest exposure; readings are capped.", StatusLevel.Warning);
         else if (reading.Verdict == MeterVerdict.TooDark && level < StatusLevel.Warning)
@@ -286,7 +388,7 @@ public sealed class AutoBrightnessController : IAsyncDisposable
     }
 
     private async Task<(List<MonitorState>, string, StatusLevel)> UpdateMonitorsAsync(
-        AppSettings settings, double smoothed, double curveValue, CancellationToken ct)
+        AppSettings settings, double rawEv, double smoothed, CancellationToken ct)
     {
         var now = DateTime.Now;
         var result = new List<MonitorState>();
@@ -294,6 +396,8 @@ public sealed class AutoBrightnessController : IAsyncDisposable
             ? PausedUntil is { } p ? $"Paused until {p:HH:mm}." : "Adjusting brightness to the room."
             : "Showing the brightness it would set, without changing it.";
         var level = StatusLevel.Info;
+        // One reading after a reset could be anything (someone in front of the camera, a lamp switching on).
+        var steady = _smoother.Readings >= 2;
 
         try
         {
@@ -332,50 +436,82 @@ public sealed class AutoBrightnessController : IAsyncDisposable
             }
 
             var track = _tracks.TryGetValue(monitor.Key, out var t) ? t : _tracks[monitor.Key] = new MonitorTrack();
-            var target = Math.Clamp((int)Math.Round(curveValue + ms.Offset), ms.Min, ms.Max);
             string? note = null;
 
-            // A change we did not make is the user's preference for the current light level.
+            // A change we did not make is the user's preference for the current light level. It is learned once
+            // two readings agree, so a light that is still changing (or a reading taken with someone walking past)
+            // doesn't get paired with it.
             if (track.Expected is { } expected && Math.Abs(current - expected) >= ManualTolerance)
             {
-                if (settings.LearnFromManual)
+                track.Pending = settings.LearnFromManual ? new PendingLearn(current - ms.Offset, rawEv) : null;
+                if (settings.Mode == ControlMode.Auto) PausedUntil = now + TimeSpan.FromMinutes(settings.ManualPauseMinutes);
+                status = settings.LearnFromManual
+                    ? $"Noticed your change to {current}%; it will be learned at the next steady reading."
+                    : "Noticed your change.";
+                if (settings.Mode == ControlMode.Auto) status += $" Automatic changes paused until {PausedUntil:HH:mm}.";
+                level = StatusLevel.Success;
+                note = "Manual change";
+            }
+            else if (track.Pending is { } pending)
+            {
+                if (!settings.LearnFromManual)
                 {
-                    var learned = Math.Clamp(current - ms.Offset, 0, 100);
+                    track.Pending = null;
+                }
+                else if (Math.Abs(rawEv - pending.Ev) <= LearnAgreement)
+                {
+                    var ev = (rawEv + pending.Ev) / 2;
+                    var learned = Math.Clamp(pending.Brightness, 0, 100);
                     List<CurvePoint> saved;
                     lock (_curveLock)
                     {
-                        _curve.Learn(smoothed, learned);
+                        _curve.Learn(ev, learned);
                         saved = [.. _curve.Points];
                     }
                     _store.Update(s => s.Curve = saved);
-                    curveValue = EvaluateCurve(smoothed);
-                    target = Math.Clamp((int)Math.Round(curveValue + ms.Offset), ms.Min, ms.Max);
-                    status = $"Learned your adjustment: light level {smoothed:F1} → {learned}%.";
+                    track.Pending = null;
+                    status = $"Learned your adjustment: light level {ev:F1} → {learned}%.";
                     level = StatusLevel.Success;
+                    Log.Write($"Learned {monitor.Name}: light {ev:F2} -> {learned}%");
                 }
-                if (settings.Mode == ControlMode.Auto)
+                else
                 {
-                    PausedUntil = now + TimeSpan.FromMinutes(settings.ManualPauseMinutes);
-                    status += $" Automatic changes paused until {PausedUntil:HH:mm}.";
+                    track.Pending = pending with { Ev = rawEv }; // the light is still changing; wait for it to settle
                 }
-                note = "Manual change";
             }
             track.Expected = current;
 
+            var (lo, hi) = ms.Range;
+            var target = Math.Clamp((int)Math.Round(EvaluateCurve(smoothed) + ms.Offset), lo, hi);
+
             if (settings.Mode == ControlMode.Auto && PausedUntil is null && note is null)
             {
-                switch (_policy.Decide(current, target, now))
+                var policy = PolicyFor(monitor.Key);
+                switch (policy.Decide(current, target, now))
                 {
+                    case WriteDecision.Write when !steady:
+                        note = "Waiting for a second reading";
+                        break;
                     case WriteDecision.Write:
+                        var steps = BrightnessRamp.Steps(current, target, settings.Transitions, policy.WritesAllowed(current, target, now));
+                        // Counted before writing, so a crash mid-fade can't lose writes from the day's total.
+                        policy.Record(now, steps.Count);
+                        SaveWriteCount(monitor.Key, policy);
+                        Log.Write($"Set {monitor.Name}: {current}% -> {target}% in {steps.Count} write(s); {policy.WritesToday} today");
                         try
                         {
-                            _policy.Record(now);
-                            SaveWriteCount();
-                            var (reached, interrupted) = await FadeAsync(monitor.Key, current, target, settings.Transitions, ct);
-                            track.Expected = reached;
-                            note = interrupted
-                                ? $"Stopped at {reached}%: brightness was changed during the fade"
-                                : $"Set {current}% → {target}%";
+                            var (reached, interrupted) = await FadeAsync(monitor.Key, track, steps, settings.Transitions, ct);
+                            if (interrupted)
+                            {
+                                // The user took over mid-fade: treat it like any other manual change.
+                                track.Pending = settings.LearnFromManual ? new PendingLearn(reached - ms.Offset, rawEv) : null;
+                                PausedUntil = now + TimeSpan.FromMinutes(settings.ManualPauseMinutes);
+                                note = $"Stopped at {reached}%: brightness was changed during the fade";
+                            }
+                            else
+                            {
+                                note = $"Set {current}% → {target}%";
+                            }
                         }
                         catch (TwinkleUnavailableException ex)
                         {
@@ -387,7 +523,7 @@ public sealed class AutoBrightnessController : IAsyncDisposable
                         note = "Waiting (minimum interval between changes)";
                         break;
                     case WriteDecision.BudgetExhausted:
-                        note = "Daily change budget used; only large changes are applied";
+                        note = "Daily write limit for this monitor reached";
                         break;
                 }
             }
@@ -399,38 +535,72 @@ public sealed class AutoBrightnessController : IAsyncDisposable
     }
 
     /// <summary>
-    /// Writes brightness in small steps so the change is a fade rather than a jump. Stops if someone else
-    /// (the user in Twinkle Tray) changes brightness mid-fade, and returns the last value written.
+    /// Writes <paramref name="steps"/> one at a time so the change is a fade rather than a jump. Stops if someone
+    /// else (the user in Twinkle Tray) changes brightness mid-fade, and returns the value reached. The track's
+    /// expected brightness follows every write, so a failure part-way isn't mistaken for a manual change.
     /// </summary>
-    private async Task<(int Reached, bool Interrupted)> FadeAsync(string key, int from, int to, TransitionOptions options, CancellationToken ct)
+    private async Task<(int Reached, bool Interrupted)> FadeAsync(string key, MonitorTrack track, IReadOnlyList<int> steps,
+        TransitionOptions options, CancellationToken ct)
     {
-        var last = from;
-        var steps = BrightnessRamp.Steps(from, to, options);
+        var last = track.Expected ?? 0;
+        var interval = options.StepInterval > MinFadeStepInterval ? options.StepInterval : MinFadeStepInterval;
         for (var i = 0; i < steps.Count; i++)
         {
             if (i > 0)
             {
-                await Task.Delay(options.StepInterval, ct);
+                if (interval > TimeSpan.Zero) await Task.Delay(interval, ct);
                 var now = await _backend.GetBrightnessAsync(key, ct);
-                if (Math.Abs(now - last) >= ManualTolerance) return (now, true);
+                if (Math.Abs(now - last) >= ManualTolerance)
+                {
+                    track.Expected = now;
+                    return (now, true);
+                }
             }
             await _backend.SetBrightnessAsync(key, steps[i], ct);
             last = steps[i];
+            track.Expected = last;
         }
         return (last, false);
     }
 
-    private void SaveWriteCount() => _store.Update(s =>
+    private WritePolicy PolicyFor(string key)
     {
-        s.WritesDay = _policy.Day;
-        s.WritesToday = _policy.WritesToday;
-    });
+        lock (_policies)
+        {
+            if (_policies.TryGetValue(key, out var policy)) return policy;
+            var s = _store.Current;
+            policy = new WritePolicy(s.WritePolicy);
+            // Monitors without their own counter start from the single count older versions kept.
+            policy.Restore(s.WriteCounters.TryGetValue(key, out var counter) ? counter : new WriteCounter(s.WritesDay, s.WritesToday, null));
+            return _policies[key] = policy;
+        }
+    }
+
+    private void SaveWriteCount(string key, WritePolicy policy)
+    {
+        var state = policy.State;
+        _store.Update(s => s.WriteCounters = new Dictionary<string, WriteCounter>(s.WriteCounters) { [key] = state });
+    }
+
+    private void ForgetObservations()
+    {
+        foreach (var track in _tracks.Values)
+        {
+            track.Expected = null;
+            track.Pending = null;
+        }
+    }
+
+    private int WritesToday()
+    {
+        lock (_policies) return _policies.Count == 0 ? 0 : _policies.Values.Max(p => p.WritesToday);
+    }
 
     private void Publish(LightReading? reading, string status, StatusLevel level, IReadOnlyList<MonitorState> monitors,
         DateTime? next, double? smoothed = null, double? curve = null)
     {
         var snapshot = new ControllerSnapshot(DateTime.Now, _store.Current.Mode, reading, smoothed ?? _smoother.Value,
-            curve, monitors, status, level, PausedUntil, _policy.WritesToday, next);
+            curve, monitors, status, level, PausedUntil, WritesToday(), next);
         Last = snapshot;
         Updated?.Invoke(snapshot);
     }
@@ -446,9 +616,13 @@ public sealed class AutoBrightnessController : IAsyncDisposable
         if (_meter is not null) await _meter.DisposeAsync();
     }
 
+    private sealed record PendingLearn(int Brightness, double Ev);
+
     private sealed class MonitorTrack
     {
         /// <summary>Brightness we last observed or wrote; anything else next time is a manual change.</summary>
         public int? Expected;
+        /// <summary>A manual change waiting for a steady reading before it is learned.</summary>
+        public PendingLearn? Pending;
     }
 }

@@ -63,7 +63,7 @@
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <StackPanel>
                             <TextBlock Text="Fade step (%)" />
-                            <TextBlock Text="Smaller steps are smoother but take more writes." Style="{StaticResource MetricCaptionStyle}" />
+                            <TextBlock Text="Smaller steps are smoother, but every step is a monitor write and counts towards the daily limit." Style="{StaticResource MetricCaptionStyle}" TextWrapping="Wrap" />
                         </StackPanel>
                         <NumberBox x:Name="FadeStepBox" Grid.Column="1" Style="{StaticResource SettingNumber}" Minimum="1" Maximum="10" ValueChanged="OnNumberChanged" />
                     </Grid>
@@ -73,7 +73,7 @@
                             <TextBlock Text="Time per fade step (milliseconds)" />
                             <TextBlock Text="Twinkle Tray merges updates closer than its update interval (500 ms by default)." Style="{StaticResource MetricCaptionStyle}" TextWrapping="Wrap" />
                         </StackPanel>
-                        <NumberBox x:Name="FadeIntervalBox" Grid.Column="1" Style="{StaticResource SettingNumber}" Minimum="100" Maximum="5000" SmallChange="100" LargeChange="500" ValueChanged="OnNumberChanged" />
+                        <NumberBox x:Name="FadeIntervalBox" Grid.Column="1" Style="{StaticResource SettingNumber}" Minimum="200" Maximum="5000" SmallChange="100" LargeChange="500" ValueChanged="OnNumberChanged" />
                     </Grid>
                     <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
@@ -88,16 +88,16 @@
                     <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <StackPanel>
-                            <TextBlock Text="Changes per day" />
-                            <TextBlock Text="After this, only large changes are made." Style="{StaticResource MetricCaptionStyle}" />
+                            <TextBlock Text="Monitor writes per day" />
+                            <TextBlock Text="Per monitor. After this, only large changes are made, up to twice this many writes." Style="{StaticResource MetricCaptionStyle}" TextWrapping="Wrap" />
                         </StackPanel>
-                        <NumberBox x:Name="BudgetBox" Grid.Column="1" Style="{StaticResource SettingNumber}" Minimum="10" Maximum="2000" SmallChange="10" ValueChanged="OnNumberChanged" />
+                        <NumberBox x:Name="BudgetBox" Grid.Column="1" Style="{StaticResource SettingNumber}" Minimum="10" Maximum="500" SmallChange="10" ValueChanged="OnNumberChanged" />
                     </Grid>
                     <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <StackPanel>
                             <TextBlock Text="Large change (%)" />
-                            <TextBlock Text="Changes at least this big are applied immediately, ignoring the limits above." Style="{StaticResource MetricCaptionStyle}" TextWrapping="Wrap" />
+                            <TextBlock Text="Changes at least this big skip the waiting time and the daily budget, but still wait 2 minutes after the last change and never exceed twice the budget." Style="{StaticResource MetricCaptionStyle}" TextWrapping="Wrap" />
                         </StackPanel>
                         <NumberBox x:Name="BigStepBox" Grid.Column="1" Style="{StaticResource SettingNumber}" Minimum="5" Maximum="100" ValueChanged="OnNumberChanged" />
                     </Grid>

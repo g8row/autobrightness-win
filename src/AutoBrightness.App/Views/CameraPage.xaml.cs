@@ -219,15 +219,14 @@ public sealed partial class CameraPage : Page
         if (_dragStart is { } start) ShowRoi(RoiFrom(start, e.GetCurrentPoint(RoiCanvas).Position));
     }
 
-    private void OnRoiReleased(object sender, PointerRoutedEventArgs e)
+    private async void OnRoiReleased(object sender, PointerRoutedEventArgs e)
     {
         if (_dragStart is not { } start) return;
         _dragStart = null;
         RoiCanvas.ReleasePointerCapture(e.Pointer);
         var roi = RoiFrom(start, e.GetCurrentPoint(RoiCanvas).Position).Clamp();
         ShowRoi(roi);
-        AppServices.Store.Update(s => s.Roi = roi);
-        AppServices.Controller.SampleNow();
+        await AppServices.Controller.SetRoiAsync(roi);
     }
 
     private Roi RoiFrom(Windows.Foundation.Point a, Windows.Foundation.Point b)
@@ -240,11 +239,10 @@ public sealed partial class CameraPage : Page
         return new Roi(x0 / w, y0 / h, (x1 - x0) / w, (y1 - y0) / h);
     }
 
-    private void OnResetRoi(object sender, RoutedEventArgs e)
+    private async void OnResetRoi(object sender, RoutedEventArgs e)
     {
         ShowRoi(Roi.Full);
-        AppServices.Store.Update(s => s.Roi = Roi.Full);
-        AppServices.Controller.SampleNow();
+        await AppServices.Controller.SetRoiAsync(Roi.Full);
     }
 
     // Calibration --------------------------------------------------------------------------------------
@@ -276,7 +274,7 @@ public sealed partial class CameraPage : Page
                 profile = await Task.Run(() => new Calibrator(device).RunAsync(progress, _calibration.Token));
             }
             profile.Save();
-            AppServices.Controller.ApplyProfile(profile);
+            await AppServices.Controller.ApplyProfileAsync(profile);
             _log.Add("Saved. Light levels now use this calibration.");
         }
         catch (OperationCanceledException)
