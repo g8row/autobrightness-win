@@ -30,8 +30,10 @@ Each installer is built from its release tag by [GitHub Actions](.github/workflo
 To check that an installer really came from this repository's workflow:
 
 ```
-gh attestation verify AutoBrightness-0.2.0-win-x64.msi --repo g8row/autobrightness-win
+gh attestation verify AutoBrightness-0.2.0-win-x64.msi --repo g8row/autobrightness-win --signer-workflow g8row/autobrightness-win/.github/workflows/release.yml
 ```
+
+The 0.2.0 ARM64 installer is a copy of the x64 one (a packaging bug); use a later release on Windows on ARM.
 
 SHA-256 checksums are in each release's `SHA256SUMS.txt`. The installer isn't code-signed, so SmartScreen may warn before it runs.
 
@@ -39,15 +41,20 @@ SHA-256 checksums are in each release's `SHA256SUMS.txt`. The installer isn't co
 
 1. **Measure:** about every 20 s, the camera opens for about half a second at 160×120. Exposure is
    locked and moved in steps (gain is used when it's too dark) until the chosen area is well exposed. The
-   camera's own settings are restored afterwards.
+   camera's own settings are restored afterwards, even after a crash. The camera isn't used while the screen
+   is locked or off, or while the PC is going to sleep.
 2. **Smooth:** a median filter ignores one-off changes, such as someone walking past. The reading reacts
    faster when the room gets brighter than when it gets darker.
 3. **Map:** an editable curve turns light level into brightness. When you change brightness in Twinkle
-   Tray yourself, that becomes a learned point on the curve.
+   Tray yourself, that becomes a learned point once two readings agree on the light level. Nearby points bend
+   towards it; the curve always rises with the light and is never steeper than 25% per stop beside a learned
+   point.
 4. **Apply (Automatic mode):** the new brightness goes to Twinkle Tray over its local pipe
-   (`\\.\pipe\twinkle-tray\cmds`) as a single step. Changes are deliberately rare: at least 10%, at most every
-   15 minutes and 48 per day, because many monitors wear out their settings memory after about 100k writes.
-   Changes of 30% or more, such as switching on the room lights, apply straight away. An optional fade is in Settings.
+   (`\\.\pipe\twinkle-tray\cmds`) as a single step. Changes are deliberately rare, because many monitors wear out
+   their settings memory after about 100k writes. For each monitor: at least 10%, at most every 15 minutes and
+   48 writes a day. Changes of 30% or more, such as switching on the room lights, skip the wait but still come
+   at least 2 minutes apart, and nothing exceeds a hard limit of 96 writes a day. The optional fade (in Settings)
+   counts every step as a write. Nothing is written until two readings have been taken.
 
 Modes: **Off** · **Preview** (measures, shows the target and learns, but never changes brightness) ·
 **Automatic**. New installs start in Preview.
@@ -68,7 +75,8 @@ dotnet test --project tests/AutoBrightness.Core.Tests
 This needs the .NET 10 SDK; Visual Studio is optional. The app is unpackaged and self-contained with
 respect to the Windows App SDK.
 
-Run `src/AutoBrightness.App/bin/Debug/net10.0-windows10.0.26100.0/win-x64/AutoBrightness.exe`.
+Run `src/AutoBrightness.App/bin/x64/Debug/net10.0-windows10.0.26100.0/win-x64/AutoBrightness.exe` (building the
+solution puts the app under `bin/x64`; `dotnet build src/AutoBrightness.App` uses `bin/Debug` instead).
 Command-line switches:
 
 - `--background`: start in the tray without showing the window (used by *Start with Windows*)
@@ -76,11 +84,10 @@ Command-line switches:
 
 Set `AUTOBRIGHTNESS_DATA` to use a different data folder (portable use, or a second copy for testing).
 
-To build the installer locally, publish the app and then build `installer/`:
+To build the installers locally (both architectures, each checked for its platform), from PowerShell:
 
 ```
-dotnet publish src/AutoBrightness.App -c Release -r win-x64 --self-contained true -o artifacts/win-x64
-dotnet build installer -c Release -p:InstallerPlatform=x64
+./build/Build-Installers.ps1 -Version 0.3.0 -OutDir dist
 ```
 
 To release, push a tag such as `v0.2.0`. The release workflow tests, builds the x64 and ARM64 installers, attests them and publishes the release.
@@ -92,9 +99,11 @@ To release, push a tag such as `v0.2.0`. The release workflow tests, builds the 
 | `src/AutoBrightness.Core` | Camera metering, calibration, crash recovery, Twinkle Tray client, control loop, settings (no UI) |
 | `src/AutoBrightness.App` | WinUI 3 tray app: dashboard, camera and calibration page, curve editor, settings |
 | `installer` | WiX MSI: per-user install, Start menu shortcut, upgrades and uninstall cleanup |
+| `build` | `Build-Installers.ps1`, used by CI and the release workflow |
 | `tests/AutoBrightness.Core.Tests` | Unit tests, including a simulated camera |
-| `tools/abctl` | Camera-only command-line diagnostics: `cameras`, `calibrate`, `measure`, `frames`, `startup`, `simulate-crash`, `recover` |
-| `spikes/CameraProbe` | The first exploration spike (uses DirectShow; kept for reference) |
+| `tools/abctl` | Camera-only command-line diagnostics: `cameras`, `calibrate`, `measure`, `controls`, `frames`, `settle`, `startup`, `simulate-crash`, `recover` |
+| `spikes/CameraProbe` | The first exploration spike, kept for reference. It uses DirectShow, which left the test camera delivering no frames until it was replugged, and its `feedback` command changes monitor brightness; don't run it casually |
 | `docs/` | [Research](docs/research.md) and [hardware findings](docs/camera-probe-findings.md) |
 
-Settings, camera profiles and state are stored in `%LOCALAPPDATA%\AutoBrightness`.
+Settings, camera profiles and state are stored in `%LOCALAPPDATA%\AutoBrightness`. `autobrightness.log` there records every
+brightness write, learned adjustment and unexpected error; it never contains camera images.
