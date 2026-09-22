@@ -33,6 +33,7 @@ public sealed class LightMeter : ILightMeter
 {
     private const int FramesPerReading = 3;
     private const int MaxAttempts = 8;
+    private const int MaxDisturbances = 4;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private CameraSession? _session;
@@ -164,12 +165,25 @@ public sealed class LightMeter : ILightMeter
         LumaFrame frame;
         MeterVerdict verdict;
         var attempts = 0;
+        var disturbed = 0;
         while (true)
         {
             attempts++;
             Apply(session, setting);
-            await session.SettleAsync(profile.SettleFrames, ct);
-            (histogram, frame) = await session.CaptureAsync(FramesPerReading, Roi, ct);
+            await session.SettleUntilStableAsync(profile.SettleFrames, ct: ct);
+            (histogram, frame, var consistent) = await session.CaptureCheckedAsync(FramesPerReading, Roi, ct);
+
+            // A reading only counts if the camera still has our settings and the image held still while we
+            // captured. Otherwise another app (or a second copy of this one) changed the camera mid-reading.
+            if (!consistent || !SettingsHeld(session, setting))
+            {
+                if (++disturbed > MaxDisturbances)
+                    throw new CameraException(CameraFailure.Unavailable,
+                        "Readings keep changing while the camera is locked; another app may be adjusting the camera.");
+                attempts--;
+                continue;
+            }
+
             (verdict, var next) = ExposurePlanner.Decide(histogram, setting, effective);
             if (verdict != MeterVerdict.Adjust || attempts >= MaxAttempts) break;
             setting = next;
@@ -180,6 +194,14 @@ public sealed class LightMeter : ILightMeter
         var ev = profile.Response.Ev(histogram, setting.Exposure, gain.Factor);
         return new LightReading(DateTime.Now, ev, setting.Exposure, gain.Gain, histogram.Mean,
             histogram.FractionAtOrAbove(ExposurePlanner.ClipLevel), verdict, attempts, sw.Elapsed, frame);
+    }
+
+    private bool SettingsHeld(CameraSession session, ExposureSetting s)
+    {
+        if (session.Controls.Exposure != s.Exposure) return false;
+        if (!Profile.GainSupported || !_gainWorks) return true;
+        var gain = Profile.GainTable[Math.Clamp(s.GainIndex, 0, Profile.GainTable.Count - 1)].Gain;
+        return session.Controls.Gain == gain;
     }
 
     private void Apply(CameraSession session, ExposureSetting s)

@@ -80,3 +80,21 @@ The first version of `CameraSession` saved the camera's settings before the stre
 Windows reported exposure as not auto, so closing the session left the camera in manual mode, and every
 later open took 4.5 s longer. That included other apps. Saving the settings after the stream starts fixes it:
 the camera is left in auto, and metering takes about 0.5 s.
+
+## Unstable readings with constant room light (2026-09-22)
+
+The dashboard showed the light level jumping between two values about one stop apart while the room's
+lighting was unchanged. Frame-by-frame recordings (`abctl settle`) showed two measurement faults:
+
+- **The lock lands late.** The first ~5 frames after opening are still auto-exposed, and the locked
+  exposure and gain take effect at frame 6 or 7. A fixed skip of 5 frames sometimes captured a transitional frame.
+- **Concurrent sessions overwrite each other.** With a second AutoBrightness process using the camera,
+  exposure read back as −6 after being set to −5, and the image dropped by exactly one stop mid-capture.
+
+Fixes: wait until three consecutive frames agree; after capturing, check that exposure and gain still read back
+as set and that the frames agree, otherwise retry; and a cross-process lock so AutoBrightness processes take turns.
+Afterwards, twelve readings over a minute were 3.06–3.07, with an old copy of the app running alongside.
+
+There is also a real effect: at night **the monitor is the main light source the camera sees**. It lights
+the user's face and the wall, so readings follow the screen's content and whether the user is in frame. Aiming the
+measurement area at a surface the screen does not light reduces this; compensating for it is future work.

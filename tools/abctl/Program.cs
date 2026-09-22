@@ -135,6 +135,26 @@ try
             break;
         }
 
+        case "settle":
+        {
+            // Frame-by-frame means after opening and locking, as LightMeter does, to see when the image stops changing.
+            var camera = Pick();
+            for (var run = 1; run <= int.Parse(Opt("count") ?? "5"); run++)
+            {
+                await using var s = await CameraSession.OpenAsync(camera);
+                var before = s.Controls.Save();
+                s.Controls.LockImageProcessing();
+                s.Controls.SetExposure(-5);
+                var gainOk = s.Controls.TrySetGain(0);
+                var means = new List<string>();
+                for (var i = 0; i < 30; i++) means.Add((await s.NextFrameAsync()).Histogram(Roi.Full).Mean.ToString("0"));
+                Console.WriteLine($"run {run}: opened with exposure {(before.ExposureAuto ? "auto" : "manual")} {before.Exposure}, gain {before.Gain}; set gain 0 ok={gainOk}, now exposure {s.Controls.Exposure} gain {s.Controls.Gain}");
+                Console.WriteLine($"  frame means: {string.Join(" ", means)}");
+                await Task.Delay(3000);
+            }
+            break;
+        }
+
         case "recover":
             Console.WriteLine(await CameraRecovery.RecoverAsync() ? "restored camera settings left by an unclean exit" : "nothing to recover");
             break;

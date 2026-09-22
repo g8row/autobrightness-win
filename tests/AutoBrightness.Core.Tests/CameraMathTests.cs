@@ -169,3 +169,14 @@ public class ExposurePlannerTests
         }
     }
 }
+
+public class FrameStabilityTests
+{
+    [Theory]
+    [InlineData(new[] { 39.0, 39.2, 38.9 }, true)]   // locked, steady
+    [InlineData(new[] { 85.0, 86.0, 85.5 }, true)]
+    [InlineData(new[] { 95.0, 40.0, 39.0 }, false)]  // lock landed mid-capture
+    [InlineData(new[] { 41.0, 41.0, 23.0 }, false)]  // another app changed exposure by a stop
+    [InlineData(new[] { 4.0, 5.0, 4.5 }, true)]      // near black: absolute tolerance
+    public void DetectsChangingImages(double[] means, bool stable) => Assert.Equal(stable, CameraSession.IsStable(means));
+}

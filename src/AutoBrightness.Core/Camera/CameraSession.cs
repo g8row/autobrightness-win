@@ -20,6 +20,7 @@ internal sealed class CameraSession : IAsyncDisposable
     private readonly MediaFrameReader _reader;
     private CameraControls.Snapshot? _snapshot;
     private bool _remembered;
+    private CameraLock? _lock;
     private readonly Channel<LumaFrame> _frames = Channel.CreateBounded<LumaFrame>(
         new BoundedChannelOptions(4) { FullMode = BoundedChannelFullMode.DropOldest });
     private int _disposed;
@@ -43,6 +44,22 @@ internal sealed class CameraSession : IAsyncDisposable
     }
 
     public static async Task<CameraSession> OpenAsync(CameraDevice device, int minWidth = 160, bool remember = true)
+    {
+        var cameraLock = await CameraLock.AcquireAsync(device.Key, TimeSpan.FromSeconds(10));
+        try
+        {
+            var session = await OpenLockedAsync(device, minWidth, remember);
+            session._lock = cameraLock;
+            return session;
+        }
+        catch
+        {
+            cameraLock.Dispose();
+            throw;
+        }
+    }
+
+    private static async Task<CameraSession> OpenLockedAsync(CameraDevice device, int minWidth, bool remember)
     {
         var capture = new MediaCapture();
         try
@@ -158,16 +175,48 @@ internal sealed class CameraSession : IAsyncDisposable
     /// <summary>Sums the histograms of the next <paramref name="count"/> frames over the region of interest.</summary>
     public async Task<(Histogram Histogram, LumaFrame Last)> CaptureAsync(int count, Roi roi, CancellationToken ct = default)
     {
+        var (h, last, _) = await CaptureCheckedAsync(count, roi, ct);
+        return (h, last);
+    }
+
+    /// <summary>
+    /// Like <see cref="CaptureAsync"/>, and also reports whether the frames agree with each other; frames that
+    /// differ mean the image was still changing (settings landing late, or another app changing them).
+    /// </summary>
+    public async Task<(Histogram Histogram, LumaFrame Last, bool Consistent)> CaptureCheckedAsync(int count, Roi roi, CancellationToken ct = default)
+    {
         var bins = new int[256];
+        var means = new List<double>(count);
         LumaFrame last = null!;
         for (var i = 0; i < count; i++)
         {
             last = await NextFrameAsync(ct);
-            var h = last.Histogram(roi).Bins;
-            for (var b = 0; b < 256; b++) bins[b] += h[b];
+            var h = last.Histogram(roi);
+            means.Add(h.Mean);
+            for (var b = 0; b < 256; b++) bins[b] += h.Bins[b];
         }
-        return (new Histogram(bins), last);
+        return (new Histogram(bins), last, IsStable(means));
     }
+
+    /// <summary>
+    /// Skips <paramref name="minFrames"/>, then waits until three consecutive frames agree, since new settings
+    /// land a variable number of frames later (the first frames after opening are still auto-exposed).
+    /// </summary>
+    public async Task SettleUntilStableAsync(int minFrames, int maxFrames = 45, CancellationToken ct = default)
+    {
+        await SettleAsync(minFrames, ct);
+        var recent = new List<double>(3);
+        for (var i = 0; i < maxFrames; i++)
+        {
+            recent.Add((await NextFrameAsync(ct)).Histogram(Roi.Full).Mean);
+            if (recent.Count > 3) recent.RemoveAt(0);
+            if (recent.Count == 3 && IsStable(recent)) return;
+        }
+    }
+
+    /// <summary>Frame means within 3% (or 1.5 levels) of each other; one stop is ~40% in 8-bit luma.</summary>
+    internal static bool IsStable(IReadOnlyList<double> means) =>
+        means.Count == 0 || means.Max() - means.Min() <= Math.Max(1.5, means.Average() * 0.03);
 
     /// <summary>When false, the camera keeps whatever settings the session left; used by diagnostics.</summary>
     internal bool RestoreOnDispose { get; set; } = true;
@@ -181,5 +230,6 @@ internal sealed class CameraSession : IAsyncDisposable
         try { await _reader.StopAsync(); } catch (Exception) { /* already stopped */ }
         _reader.Dispose();
         _capture.Dispose();
+        _lock?.Dispose();
     }
 }
