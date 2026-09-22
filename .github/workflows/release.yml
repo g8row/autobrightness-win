@@ -5,14 +5,16 @@ on:
   push:
     tags: ['v*']
 
-permissions:
-  contents: write     # create the release
-  id-token: write     # sign the build provenance with Sigstore
-  attestations: write # store the attestation on GitHub
+permissions: {}
 
 jobs:
-  release:
+  # Runs the build and tests (third-party NuGet and MSBuild code) with a read-only token.
+  build:
     runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -23,8 +25,8 @@ jobs:
       - name: Version from tag
         shell: pwsh
         run: |
-          $version = '${{ github.ref_name }}'.TrimStart('v')
-          if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { throw "Tag ${{ github.ref_name }} is not vX.Y.Z" }
+          $version = $env:TAG.TrimStart('v')
+          if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { throw "Tag $env:TAG is not vX.Y.Z" }
           "VERSION=$version" >> $env:GITHUB_ENV
 
       - name: Test
@@ -32,18 +34,7 @@ jobs:
 
       - name: Publish and build installers
         shell: pwsh
-        run: |
-          New-Item -ItemType Directory dist | Out-Null
-          foreach ($arch in 'x64', 'arm64') {
-            $rid = "win-$arch"
-            dotnet publish src/AutoBrightness.App -c Release -r $rid --self-contained true `
-              -p:Version=$env:VERSION -p:ContinuousIntegrationBuild=true -o "publish/$rid"
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-            dotnet build installer -c Release -p:InstallerPlatform=$arch -p:Version=$env:VERSION `
-              -p:PublishDir="$PWD/publish/$rid/" -o "msi/$rid"
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-            Copy-Item "msi/$rid/AutoBrightness.msi" "dist/AutoBrightness-$env:VERSION-$rid.msi"
-          }
+        run: ./build/Build-Installers.ps1 -Version $env:VERSION -OutDir dist
 
       - name: Checksums
         shell: pwsh
@@ -55,22 +46,50 @@ jobs:
           [IO.File]::WriteAllText("$PWD/dist/SHA256SUMS.txt", (($lines -join "`n") + "`n"))
           Get-Content dist/SHA256SUMS.txt
 
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  # Only the steps that need write access, and none that run code from the repository or its packages.
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write     # create the release
+      id-token: write     # sign the build provenance with Sigstore
+      attestations: write # store the attestation on GitHub
+    env:
+      TAG: ${{ github.ref_name }}
+      REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
+
+      - name: Verify checksums
+        working-directory: dist
+        run: sha256sum -c SHA256SUMS.txt
+
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/*.msi
+          subject-path: |
+            dist/*.msi
+            dist/SHA256SUMS.txt
 
       - name: Create release
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          $repo = '${{ github.repository }}'
+          $version = $env:TAG.TrimStart('v')
           $notes = @"
           ## Install
 
-          - ``AutoBrightness-$env:VERSION-win-x64.msi``: most PCs
-          - ``AutoBrightness-$env:VERSION-win-arm64.msi``: Windows on ARM
+          - ``AutoBrightness-$version-win-x64.msi``: most PCs
+          - ``AutoBrightness-$version-win-arm64.msi``: Windows on ARM
 
           Run the installer. It installs for your user only (no administrator prompt) into ``%LOCALAPPDATA%\Programs\AutoBrightness``, adds a Start menu shortcut and starts the app. Newer versions upgrade in place; uninstall from Settings > Apps. Your settings and camera calibration in ``%LOCALAPPDATA%\AutoBrightness`` are kept.
 
@@ -81,9 +100,10 @@ jobs:
           Each installer was built from this tag by GitHub Actions and has a signed build provenance attestation:
 
           ``````
-          gh attestation verify AutoBrightness-$env:VERSION-win-x64.msi --repo $repo
+          gh attestation verify AutoBrightness-$version-win-x64.msi --repo $env:REPO --signer-workflow $env:REPO/.github/workflows/release.yml
           ``````
 
           SHA-256 checksums are in ``SHA256SUMS.txt``. The installer is not Authenticode-signed, so Windows SmartScreen may warn before it runs.
           "@
-          gh release create '${{ github.ref_name }}' dist/* --repo $repo --title "AutoBrightness $env:VERSION" --notes "$notes" --generate-notes --verify-tag
+          $prerelease = if ($version.Contains('-')) { @('--prerelease') } else { @() }
+          gh release create $env:TAG dist/* --repo $env:REPO --title "AutoBrightness $version" --notes "$notes" --generate-notes --verify-tag @prerelease

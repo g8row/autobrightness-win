@@ -487,3 +487,5 @@ probe-output/
 # Release builds
 artifacts/
 dist/
+msi/
+msi-out/

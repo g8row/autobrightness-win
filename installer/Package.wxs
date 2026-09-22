@@ -60,7 +60,7 @@
     -->
     <CustomAction Id="RemoveStartupEntry"
                   Directory="INSTALLFOLDER"
-                  ExeCommand="reg.exe delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v AutoBrightness /f"
+                  ExeCommand="&quot;[SystemFolder]reg.exe&quot; delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v AutoBrightness /f"
                   Execute="deferred"
                   Impersonate="yes"
                   Return="ignore" />
