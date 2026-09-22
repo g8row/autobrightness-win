@@ -29,21 +29,29 @@ public sealed class TwinkleClient(string pipeName = TwinkleClient.DefaultPipeNam
     public async Task<IReadOnlyList<TwinkleMonitor>> ListAsync(CancellationToken ct = default)
     {
         var reply = await SendAsync(new { type = "list" }, ct);
-        var root = JsonNode.Parse(reply) as JsonObject ?? throw new TwinkleUnavailableException($"Unexpected reply from Twinkle Tray: {reply}");
-        return root.Select(kv => new TwinkleMonitor(
-                kv.Key,
-                kv.Value?["name"]?.GetValue<string>() ?? kv.Key,
-                kv.Value?["type"]?.GetValue<string>() ?? "?",
-                ReadInt(kv.Value?["brightness"])))
-            .ToList();
+        try
+        {
+            var root = JsonNode.Parse(reply) as JsonObject ?? throw new JsonException("not an object");
+            return root.Select(kv => new TwinkleMonitor(
+                    kv.Key,
+                    ReadString(kv.Value?["name"]) ?? kv.Key,
+                    ReadString(kv.Value?["type"]) ?? "?",
+                    ReadInt(kv.Value?["brightness"])))
+                .ToList();
+        }
+        catch (JsonException ex)
+        {
+            throw new TwinkleUnavailableException($"Unexpected reply from Twinkle Tray: {Shorten(reply)}", ex);
+        }
     }
 
     public async Task<int> GetBrightnessAsync(string monitorKey, CancellationToken ct = default)
     {
         var reply = await SendAsync(new { type = "get", monitor = monitorKey, property = "brightness" }, ct);
-        return int.TryParse(reply.Trim(), out var v)
-            ? v
-            : throw new TwinkleUnavailableException($"Twinkle Tray did not report brightness for {monitorKey} ({reply}).");
+        return double.TryParse(reply.Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v)
+               && v is >= 0 and <= 100
+            ? (int)Math.Round(v)
+            : throw new TwinkleUnavailableException($"Twinkle Tray did not report brightness for {monitorKey} ({Shorten(reply)}).");
     }
 
     /// <summary>
@@ -54,7 +62,11 @@ public sealed class TwinkleClient(string pipeName = TwinkleClient.DefaultPipeNam
         SendAsync(new { type = "set", monitor = monitorKey, vcp = "brightness", value = Math.Clamp(percent, 0, 100) }, ct);
 
     private static int ReadInt(JsonNode? n) =>
-        n is JsonValue v && v.TryGetValue<double>(out var d) ? (int)Math.Round(d) : 0;
+        n is JsonValue v && v.TryGetValue<double>(out var d) && double.IsFinite(d) ? (int)Math.Clamp(Math.Round(d), 0, 100) : 0;
+
+    private static string? ReadString(JsonNode? n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
+
+    private static string Shorten(string s) => s.Length > 200 ? s[..200] + "…" : s;
 
     private async Task<string> SendAsync(object message, CancellationToken ct)
     {
@@ -62,7 +74,9 @@ public sealed class TwinkleClient(string pipeName = TwinkleClient.DefaultPipeNam
         timeout.CancelAfter(Timeout);
         try
         {
-            await using var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+            // CurrentUserOnly: only talk to a pipe server running as this user, not one another account created first.
+            await using var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut,
+                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
             await pipe.ConnectAsync(timeout.Token);
             await pipe.WriteAsync(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(message)), timeout.Token);
             await pipe.FlushAsync(timeout.Token);
@@ -84,6 +98,10 @@ public sealed class TwinkleClient(string pipeName = TwinkleClient.DefaultPipeNam
         catch (IOException ex)
         {
             throw new TwinkleUnavailableException("Could not talk to Twinkle Tray. Make sure it is running.", ex);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            throw new TwinkleUnavailableException("Twinkle Tray's command pipe belongs to another user or refused the connection.", ex);
         }
     }
 

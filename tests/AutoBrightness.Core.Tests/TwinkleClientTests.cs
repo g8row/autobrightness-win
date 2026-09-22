@@ -74,6 +74,47 @@ public sealed class TwinkleClientTests
         Assert.Equal(("7&bf77d&0&UID260", "27GL650F", "ddcci", 30), (m.Key, m.Name, m.Type, m.Brightness));
     }
 
+    [Theory]
+    [InlineData("""{"a":{"name":42,"type":["x"],"brightness":"high"}}""")]
+    [InlineData("""{"a":{"brightness":1e9}}""")]
+    public async Task OddMonitorFieldsAreTolerated(string reply)
+    {
+        var pipe = NewPipe();
+        IReadOnlyList<TwinkleMonitor> monitors = [];
+        await ServeOnceAsync(pipe, reply, async () => monitors = await new TwinkleClient(pipe).ListAsync());
+        var m = Assert.Single(monitors);
+        Assert.InRange(m.Brightness, 0, 100);
+    }
+
+    [Theory]
+    [InlineData("[1,2]")]
+    [InlineData("undefined")]
+    public async Task MalformedListIsReportedAsUnavailable(string reply)
+    {
+        var pipe = NewPipe();
+        Exception? error = null;
+        await ServeOnceAsync(pipe, reply, async () => error = await Record.ExceptionAsync(() => new TwinkleClient(pipe).ListAsync()));
+        Assert.IsType<TwinkleUnavailableException>(error);
+    }
+
+    [Theory]
+    [InlineData("42.6", 43)]
+    [InlineData("undefined", null)]
+    [InlineData("250", null)]
+    public async Task BrightnessRepliesAreValidated(string reply, int? expected)
+    {
+        var pipe = NewPipe();
+        int? result = null;
+        Exception? error = null;
+        await ServeOnceAsync(pipe, reply, async () =>
+        {
+            try { result = await new TwinkleClient(pipe).GetBrightnessAsync("UID260"); }
+            catch (Exception ex) { error = ex; }
+        });
+        if (expected is null) Assert.IsType<TwinkleUnavailableException>(error);
+        else Assert.Equal(expected, result);
+    }
+
     [Fact]
     public async Task MissingTwinkleTrayIsReported() =>
         await Assert.ThrowsAsync<TwinkleUnavailableException>(() => new TwinkleClient(NewPipe()).GetBrightnessAsync("x", TestContext.Current.CancellationToken));
