@@ -81,7 +81,7 @@ public sealed class TwinkleClientTests
     {
         var pipe = NewPipe();
         IReadOnlyList<TwinkleMonitor> monitors = [];
-        await ServeOnceAsync(pipe, reply, async () => monitors = await new TwinkleClient(pipe).ListAsync());
+        await ServeOnceAsync(pipe, reply, async () => monitors = await new TwinkleClient(pipe).ListAsync(TestContext.Current.CancellationToken));
         var m = Assert.Single(monitors);
         Assert.InRange(m.Brightness, 0, 100);
     }
@@ -93,7 +93,7 @@ public sealed class TwinkleClientTests
     {
         var pipe = NewPipe();
         Exception? error = null;
-        await ServeOnceAsync(pipe, reply, async () => error = await Record.ExceptionAsync(() => new TwinkleClient(pipe).ListAsync()));
+        await ServeOnceAsync(pipe, reply, async () => error = await Record.ExceptionAsync(() => new TwinkleClient(pipe).ListAsync(TestContext.Current.CancellationToken)));
         Assert.IsType<TwinkleUnavailableException>(error);
     }
 
@@ -108,7 +108,7 @@ public sealed class TwinkleClientTests
         Exception? error = null;
         await ServeOnceAsync(pipe, reply, async () =>
         {
-            try { result = await new TwinkleClient(pipe).GetBrightnessAsync("UID260"); }
+            try { result = await new TwinkleClient(pipe).GetBrightnessAsync("UID260", TestContext.Current.CancellationToken); }
             catch (Exception ex) { error = ex; }
         });
         if (expected is null) Assert.IsType<TwinkleUnavailableException>(error);
