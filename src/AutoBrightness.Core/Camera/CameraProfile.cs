@@ -49,9 +49,33 @@ public sealed record CameraProfile
         try
         {
             var path = PathFor(key);
-            return File.Exists(path) ? JsonSerializer.Deserialize<CameraProfile>(File.ReadAllText(path), Json) : null;
+            return File.Exists(path) ? JsonSerializer.Deserialize<CameraProfile>(File.ReadAllText(path), Json)?.Normalized() : null;
         }
-        catch (JsonException) { return null; }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        {
+            Log.Write($"Camera profile for {key} could not be read; the camera is treated as uncalibrated", ex);
+            return null;
+        }
+    }
+
+    /// <summary>The same profile with values that would break metering (from a hand-edited file) made safe.</summary>
+    internal CameraProfile Normalized()
+    {
+        var gainTable = (GainTable ?? []).Where(g => g is not null && double.IsFinite(g.Factor) && g.Factor > 0).ToList();
+        if (gainTable.Count == 0) gainTable = [new(0, 1.0)];
+        var (min, max) = (Math.Min(ExposureMin, ExposureMax), Math.Max(ExposureMin, ExposureMax));
+        return this with
+        {
+            ExposureMin = min,
+            ExposureMax = max,
+            ExposureStart = Math.Clamp(ExposureStart, min, max),
+            GainTable = gainTable,
+            GainSupported = GainSupported && gainTable.Count > 1,
+            Black = double.IsFinite(Black) ? Black : 0,
+            Gamma = double.IsFinite(Gamma) ? Gamma : 2.2,
+            SettleFrames = Math.Clamp(SettleFrames, 1, 20),
+            Notes = Notes ?? [],
+        };
     }
 
     public void Save()

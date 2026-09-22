@@ -180,3 +180,33 @@ public class FrameStabilityTests
     [InlineData(new[] { 4.0, 5.0, 4.5 }, true)]      // near black: absolute tolerance
     public void DetectsChangingImages(double[] means, bool stable) => Assert.Equal(stable, CameraSession.IsStable(means));
 }
+
+public class CameraProfileTests
+{
+    [Fact]
+    public void BrokenValuesAreMadeSafe()
+    {
+        var p = new CameraProfile
+        {
+            Key = "k", Name = "n", ExposureMin = -5, ExposureMax = -13, ExposureStart = 4,
+            GainSupported = true, GainTable = [], Gamma = double.NaN, SettleFrames = 0, Notes = null!,
+        }.Normalized();
+
+        Assert.Equal((-13, -5, -5), (p.ExposureMin, p.ExposureMax, p.ExposureStart));
+        Assert.False(p.GainSupported);
+        Assert.Equal([new GainStep(0, 1.0)], p.GainTable);
+        Assert.Equal(2.2, p.Gamma);
+        Assert.Equal(1, p.SettleFrames);
+        Assert.NotNull(p.Notes);
+    }
+
+    [Fact]
+    public void RecoveryRecordsFromOlderVersionsStillLoad()
+    {
+        var json = """{"DeviceId":"cam","Snapshot":{"ExposureAuto":true,"Exposure":-6,"WhiteBalanceAuto":true,"Gain":0}}""";
+        var pending = System.Text.Json.JsonSerializer.Deserialize<CameraRecovery.Pending>(json)!;
+        Assert.True(pending.Snapshot.ExposureAuto);
+        Assert.Null(pending.Snapshot.Backlight);
+        Assert.False(pending.Snapshot.BacklightAuto);
+    }
+}

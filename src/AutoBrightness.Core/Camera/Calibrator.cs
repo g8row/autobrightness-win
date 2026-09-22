@@ -68,10 +68,9 @@ public sealed class Calibrator(CameraDevice device)
         var (black, gamma, spread, used) = FitResponse(sweep);
         Report(0.7, "Response curve", $"black level {black:F1}, gamma {gamma:F2} from {used} exposures (consistency ±{spread:F2} stops)");
         if (used < 3)
-        {
-            notes.Add("Too few well-exposed points to fit the response curve; using gamma 2.2. Calibrate again with more light.");
-            gamma = 2.2;
-        }
+            throw new CameraException(CameraFailure.UnsuitableScene,
+                "Not enough light to calibrate: fewer than three exposures gave a usable picture. " +
+                "Turn on a light or point the camera at a lit wall, then try again. The previous calibration is unchanged.");
         var response = new ResponseModel(black, gamma);
 
         // Noise at the exposure closest to a mid-grey image.
@@ -87,8 +86,10 @@ public sealed class Calibrator(CameraDevice device)
         var gainTable = new List<GainStep> { new(gainMin, 1.0) };
         if (gainWritable)
         {
-            var dim = sweep.Where(p => p.Histogram.Mean is > 12 and < 45).Select(p => (int?)p.Exposure).LastOrDefault()
-                      ?? sweep.First().Exposure;
+            // A dim but measurable exposure; if every usable one is brighter than that, the shortest usable one.
+            // (Never a near-black one: its linear light is close to zero and every gain factor would blow up.)
+            var dim = sweep.Where(p => p.Histogram.Mean is >= 12 and < 45).Select(p => (int?)p.Exposure).LastOrDefault()
+                      ?? sweep.First(p => p.Histogram.Mean >= 12).Exposure;
             c.SetExposure(dim);
             double? baseline = null;
             var candidates = GainCandidates.Where(g => g >= gainMin && (gainRange is null || g <= gainRange.Value.Max)).ToList();

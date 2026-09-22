@@ -159,6 +159,20 @@ try
             Console.WriteLine(await CameraRecovery.RecoverAsync() ? "restored camera settings left by an unclean exit" : "nothing to recover");
             break;
 
+        case "controls":
+        {
+            // The settings AutoBrightness saves and restores, as the camera reports them right now.
+            var camera = Pick();
+            await using var s = await CameraSession.OpenAsync(camera, remember: false);
+            s.RestoreOnDispose = false;
+            var c = s.Controls.Save();
+            Console.WriteLine($"exposure {(c.ExposureAuto ? "auto" : "manual")} {c.Exposure}, gain {c.Gain?.ToString() ?? "?"}, " +
+                              $"white balance {(c.WhiteBalanceAuto ? "auto" : "manual")} {c.WhiteBalance}, " +
+                              $"backlight compensation {(c.BacklightAuto ? "auto" : "manual")} {c.Backlight?.ToString() ?? "unsupported"}");
+            Console.WriteLine(CameraRecovery.Peek() is { } p ? $"pending recovery record for {p.DeviceId}" : "no pending recovery record");
+            break;
+        }
+
         default:
             Console.WriteLine("""
                 abctl - camera diagnostics for AutoBrightness (never changes monitor brightness)
@@ -167,6 +181,12 @@ try
                   calibrate [--camera NAME]                run the calibration and save the profile
                   measure   [--camera NAME] [--count N] [--interval S]
                                                            take light readings, opening the camera for each
+                  controls  [--camera NAME]                show the camera settings AutoBrightness saves and restores
+                  frames    [--camera NAME]                frame timing after opening and after exposure changes
+                  settle    [--camera NAME] [--count N]    frame-by-frame means after locking, to check settling
+                  startup   [--camera NAME]                first-frame latency by exposure mode at stream start
+                  simulate-crash [--camera NAME]           lock exposure and exit without restoring it
+                  recover                                  restore settings left by an unclean exit
                 """);
             break;
     }

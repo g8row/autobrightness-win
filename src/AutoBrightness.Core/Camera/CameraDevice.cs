@@ -29,7 +29,7 @@ public sealed partial record CameraDevice(string Id, string Name)
     public override string ToString() => Name;
 }
 
-public enum CameraFailure { Unavailable, AccessDenied, Stalled, Unsupported }
+public enum CameraFailure { Unavailable, AccessDenied, Stalled, Unsupported, UnsuitableScene }
 
 public sealed class CameraException(CameraFailure failure, string message, Exception? inner = null)
     : Exception(message, inner)

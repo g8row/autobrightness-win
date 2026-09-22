@@ -62,6 +62,7 @@ internal sealed class CameraSession : IAsyncDisposable
     private static async Task<CameraSession> OpenLockedAsync(CameraDevice device, int minWidth, bool remember)
     {
         var capture = new MediaCapture();
+        CameraSession? session = null;
         try
         {
             await capture.InitializeAsync(new MediaCaptureInitializationSettings
@@ -100,22 +101,34 @@ internal sealed class CameraSession : IAsyncDisposable
 
             var reader = await capture.CreateFrameReaderAsync(source, MediaEncodingSubtypes.Nv12);
             reader.AcquisitionMode = MediaFrameReaderAcquisitionMode.Realtime;
-            var session = new CameraSession(device, capture, reader, format);
+            session = new CameraSession(device, capture, reader, format);
             var status = await reader.StartAsync();
             if (status != MediaFrameReaderStartStatus.Success)
-            {
-                await session.DisposeAsync();
                 throw new CameraException(CameraFailure.Unavailable, $"The camera stream failed to start ({status}).");
-            }
+
             // Snapshot after the stream starts: property reads before streaming delayed the first frame by ~4 s.
-            session._snapshot = session.Controls.Save();
-            if (remember) CameraRecovery.Remember(device.Id, session._snapshot);
-            session._remembered = remember;
+            // If an earlier session died holding this camera, its record holds the user's real settings; the
+            // camera's current ones are what that session left behind, so restore to the record instead.
+            var pending = remember ? CameraRecovery.Peek() : null;
+            if (pending?.DeviceId == device.Id)
+            {
+                session._snapshot = pending.Snapshot;
+                session._remembered = true;
+            }
+            else
+            {
+                session._snapshot = session.Controls.Save();
+                // A record for another camera stays until that camera is back; this session goes unrecorded.
+                session._remembered = remember && pending is null;
+                if (session._remembered) CameraRecovery.Remember(device.Id, session._snapshot);
+            }
             return session;
         }
-        catch (Exception ex) when (ex is not CameraException)
+        catch (Exception ex)
         {
-            capture.Dispose();
+            if (session is not null) await session.DisposeAsync();
+            else capture.Dispose();
+            if (ex is CameraException) throw;
             throw new CameraException(CameraFailure.Unavailable, $"The camera stream failed to start. ({ex.Message.Trim()})", ex);
         }
     }

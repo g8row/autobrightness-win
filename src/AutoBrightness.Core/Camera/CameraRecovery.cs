@@ -23,6 +23,19 @@ public static class CameraRecovery
         catch (IOException) { /* best effort */ }
     }
 
+    /// <summary>Settings left behind by a session that never closed, if any.</summary>
+    internal static Pending? Peek()
+    {
+        try
+        {
+            return File.Exists(PathName) ? JsonSerializer.Deserialize<Pending>(File.ReadAllText(PathName)) : null;
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
     internal static void Forget()
     {
         try { File.Delete(PathName); }

@@ -75,23 +75,36 @@ internal sealed class CameraControls(VideoDeviceController vdc)
         }
     }
 
+    /// <summary>Every setting this app changes, so <see cref="Restore"/> can put all of them back.</summary>
     public Snapshot Save()
     {
         vdc.Exposure.TryGetAuto(out var expAuto);
         vdc.WhiteBalance.TryGetAuto(out var wbAuto);
-        return new Snapshot(expAuto, Exposure, wbAuto, Gain);
+        var wb = vdc.WhiteBalance.TryGetValue(out var kelvin) ? kelvin : (double?)null;
+        var blc = vdc.BacklightCompensation;
+        var blcSupported = blc.Capabilities.Supported;
+        var blcAuto = false;
+        if (blcSupported) blc.TryGetAuto(out blcAuto);
+        var blcValue = blcSupported && blc.TryGetValue(out var b) ? b : (double?)null;
+        return new Snapshot(expAuto, Exposure, wbAuto, Gain, wb, blcValue, blcAuto);
     }
 
     public void Restore(Snapshot s)
     {
-        try
+        // Each control separately, so one that fails doesn't leave the rest changed.
+        static void Try(Action restore)
         {
-            if (s.Gain is { } g) TrySetGain(g);
-            if (s.ExposureAuto) vdc.Exposure.TrySetAuto(true);
-            else if (s.Exposure is { } e) vdc.Exposure.TrySetValue(e);
-            if (s.WhiteBalanceAuto) vdc.WhiteBalance.TrySetAuto(true);
+            try { restore(); }
+            catch (Exception) { /* device gone, or the control went away */ }
         }
-        catch (Exception) { /* device already gone */ }
+
+        if (s.Gain is { } g) Try(() => TrySetGain(g));
+        if (s.ExposureAuto) Try(() => vdc.Exposure.TrySetAuto(true));
+        else if (s.Exposure is { } e) Try(() => vdc.Exposure.TrySetValue(e));
+        if (s.WhiteBalanceAuto) Try(() => vdc.WhiteBalance.TrySetAuto(true));
+        else if (s.WhiteBalance is { } wb) Try(() => vdc.WhiteBalance.TrySetValue(wb));
+        if (s.Backlight is { } blc) Try(() => vdc.BacklightCompensation.TrySetValue(blc));
+        if (s.BacklightAuto) Try(() => vdc.BacklightCompensation.TrySetAuto(true));
     }
 
     /// <summary>Returns exposure and white balance to automatic; for diagnostics.</summary>
@@ -101,7 +114,9 @@ internal sealed class CameraControls(VideoDeviceController vdc)
         vdc.WhiteBalance.TrySetAuto(true);
     }
 
-    public sealed record Snapshot(bool ExposureAuto, int? Exposure, bool WhiteBalanceAuto, int? Gain);
+    /// <remarks>Fields after <see cref="Gain"/> were added later; they default so older recovery files still load.</remarks>
+    public sealed record Snapshot(bool ExposureAuto, int? Exposure, bool WhiteBalanceAuto, int? Gain,
+        double? WhiteBalance = null, double? Backlight = null, bool BacklightAuto = false);
 
     private static byte[] Property(uint id, uint flags)
     {
